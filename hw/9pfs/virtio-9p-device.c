@@ -132,6 +132,8 @@ static void virtio_9p_device_realize(DeviceState *dev, Error **errp)
 
     return;
 out:
+    if (s->ops && s->ops->cleanup)
+	    s->ops->cleanup(&s->ctx);
     g_free(s->ctx.fs_root);
     g_free(s->tag);
     virtio_cleanup(vdev);
