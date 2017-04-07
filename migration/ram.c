@@ -606,9 +606,31 @@ static void migration_bitmap_sync_init(void)
     num_dirty_pages_period = 0;
     xbzrle_cache_miss_prev = 0;
     iterations_prev = 0;
+    migration_dirty_pages = 0;
 }
 
-static void migration_bitmap_sync(void)
+static void migration_bitmap_init(unsigned long *bitmap)
+{
+    RAMBlock *block;
+
+    bitmap_clear(bitmap, 0, last_ram_offset() >> TARGET_PAGE_BITS);
+    rcu_read_lock();
+    QLIST_FOREACH_RCU(block, &ram_list.blocks, next) {
+        if (!migrate_bypass_shared_memory() || !qemu_ram_is_shared(block)) {
+            bitmap_set(bitmap, block->offset >> TARGET_PAGE_BITS,
+                       block->used_length >> TARGET_PAGE_BITS);
+
+            /*
+             * Count the total number of pages used by ram blocks not including
+             * any gaps due to alignment or unplugs.
+             */
+	    migration_dirty_pages += block->used_length >> TARGET_PAGE_BITS;
+	}
+    }
+    rcu_read_unlock();
+}
+
+ static void migration_bitmap_sync(void)
 {
     RAMBlock *block;
     uint64_t num_dirty_pages_init = migration_dirty_pages;
@@ -632,7 +654,9 @@ static void migration_bitmap_sync(void)
     qemu_mutex_lock(&migration_bitmap_mutex);
     rcu_read_lock();
     QLIST_FOREACH_RCU(block, &ram_list.blocks, next) {
-        migration_bitmap_sync_range(block->offset, block->used_length);
+        if (!migrate_bypass_shared_memory() || !qemu_ram_is_shared(block)) {
+            migration_bitmap_sync_range(block->offset, block->used_length);
+        }
     }
     rcu_read_unlock();
     qemu_mutex_unlock(&migration_bitmap_mutex);
@@ -1930,11 +1954,7 @@ static int ram_save_init_globals(void)
         bitmap_set(migration_bitmap_rcu->unsentmap, 0, ram_bitmap_pages);
     }
 
-    /*
-     * Count the total number of pages used by ram blocks not including any
-     * gaps due to alignment or unplugs.
-     */
-    migration_dirty_pages = ram_bytes_total() >> TARGET_PAGE_BITS;
+    migration_bitmap_init(migration_bitmap_rcu->bmap);
 
     memory_global_dirty_log_start();
     migration_bitmap_sync();

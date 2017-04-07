@@ -587,12 +587,16 @@
 #        primary side will be migrated continuously to the VM on secondary
 #        side, this process is called COarse-Grain LOck Stepping (COLO) for
 #        Non-stop Service. (since 2.8)
+# @bypass-shared-memory: the shared memory region will be bypassed on migration.
+#          This feature allows the memory region to be reused by new qemu(s)
+#          or be migrated separately. (since 2.6)
 #
 # Since: 1.2
 ##
 { 'enum': 'MigrationCapability',
   'data': ['xbzrle', 'rdma-pin-all', 'auto-converge', 'zero-blocks',
-           'compress', 'events', 'postcopy-ram', 'x-colo'] }
+           'compress', 'events', 'postcopy-ram', 'x-colo',
+					 'bypass-shared-memory'] }
 
 ##
 # @MigrationCapabilityStatus:

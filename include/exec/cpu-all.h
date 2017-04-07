@@ -323,5 +323,6 @@ int cpu_memory_rw_debug(CPUState *cpu, target_ulong addr,
                         uint8_t *buf, int len, int is_write);
 
 int cpu_exec(CPUState *cpu);
+bool qemu_ram_is_shared(RAMBlock *rb);
 
 #endif /* CPU_ALL_H */
