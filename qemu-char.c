@@ -896,6 +896,7 @@ static void io_remove_watch_poll(guint tag)
 static void remove_fd_in_watch(CharDriverState *chr)
 {
     if (chr->fd_in_tag) {
+        error_report("removing fd_in_tag %u for tcp char device\n", chr->fd_in_tag);
         io_remove_watch_poll(chr->fd_in_tag);
         chr->fd_in_tag = 0;
     }
@@ -2934,6 +2935,7 @@ static void tcp_chr_connect(void *opaque)
     if (s->chan) {
         chr->fd_in_tag = io_add_watch_poll(s->chan, tcp_chr_read_poll,
                                            tcp_chr_read, chr);
+        error_report("added fd_in_tag %u for tcp char device\n", chr->fd_in_tag);
     }
     qemu_chr_be_generic_open(chr);
 }
@@ -2942,10 +2944,12 @@ static void tcp_chr_update_read_handler(CharDriverState *chr)
 {
     TCPCharDriver *s = chr->opaque;
 
+    error_report("updating fd_in_tag %u for tcp char device connected %d\n", chr->fd_in_tag, s->connected);
     remove_fd_in_watch(chr);
     if (s->chan) {
         chr->fd_in_tag = io_add_watch_poll(s->chan, tcp_chr_read_poll,
                                            tcp_chr_read, chr);
+        error_report("updated fd_in_tag %u for tcp char device connected %d\n", chr->fd_in_tag, s->connected);
     }
 }
 
