@@ -709,6 +709,21 @@ void cpu_address_space_init(CPUState *cpu, AddressSpace *as, int asidx)
     }
 }
 
+void cpu_address_space_destory(CPUState *cpu)
+{
+    if (cpu->as) {
+        int i;
+
+        for (i = 0; i < cpu->num_ases; i++) {
+            address_space_destroy(cpu_get_address_space(cpu, i));
+        }
+        g_free(cpu->cpu_ases);
+        cpu->num_ases = 0;
+        cpu->cpu_ases = NULL;
+        cpu->as = NULL;
+    }
+}
+
 AddressSpace *cpu_get_address_space(CPUState *cpu, int asidx)
 {
     /* Return the AddressSpace corresponding to the specified index */

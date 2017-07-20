@@ -82,6 +82,13 @@ void cpu_reloading_memory_map(void);
  * Note that with KVM only one address space is supported.
  */
 void cpu_address_space_init(CPUState *cpu, AddressSpace *as, int asidx);
+/**
+ * cpu_address_space_destory:
+ * @cpu: which CPU's address spaces to destory
+ *
+ * Destory the address space attached to the CPU's cpu_ases list.
+ */
+void cpu_address_space_destory(CPUState *cpu);
 /* cputlb.c */
 /**
  * tlb_flush_page:

@@ -1045,6 +1045,13 @@ void run_on_cpu(CPUState *cpu, run_on_cpu_func func, run_on_cpu_data data)
     do_run_on_cpu(cpu, func, data, &qemu_global_mutex);
 }
 
+static void qemu_destory_vcpu(CPUState *cpu)
+{
+    cpu_address_space_destory(cpu);
+    cpu->created = false;
+    qemu_cond_signal(&qemu_cpu_cond);
+}
+
 static void qemu_kvm_destroy_vcpu(CPUState *cpu)
 {
     if (kvm_destroy_vcpu(cpu) < 0) {
@@ -1134,8 +1141,7 @@ static void *qemu_kvm_cpu_thread_fn(void *arg)
     } while (!cpu->unplug || cpu_can_run(cpu));
 
     qemu_kvm_destroy_vcpu(cpu);
-    cpu->created = false;
-    qemu_cond_signal(&qemu_cpu_cond);
+    qemu_destory_vcpu(cpu);
     qemu_mutex_unlock_iothread();
     return NULL;
 }
@@ -1286,8 +1292,7 @@ static void deal_with_unplugged_cpus(void)
     CPU_FOREACH(cpu) {
         if (cpu->unplug && !cpu_can_run(cpu)) {
             qemu_tcg_destroy_vcpu(cpu);
-            cpu->created = false;
-            qemu_cond_signal(&qemu_cpu_cond);
+	    qemu_destory_vcpu(cpu);
             break;
         }
     }
@@ -1495,8 +1500,7 @@ static void *qemu_tcg_cpu_thread_fn(void *arg)
             }
         } else if (cpu->unplug) {
             qemu_tcg_destroy_vcpu(cpu);
-            cpu->created = false;
-            qemu_cond_signal(&qemu_cpu_cond);
+	    qemu_destory_vcpu(cpu);
             qemu_mutex_unlock_iothread();
             return NULL;
         }
