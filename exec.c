@@ -1272,24 +1272,13 @@ static uint16_t phys_section_add(PhysPageMap *map,
     return map->sections_nb++;
 }
 
-static void phys_section_destroy(MemoryRegion *mr)
-{
-    bool have_sub_page = mr->subpage;
-
-    memory_region_unref(mr);
-
-    if (have_sub_page) {
-        subpage_t *subpage = container_of(mr, subpage_t, iomem);
-        object_unref(OBJECT(&subpage->iomem));
-        g_free(subpage);
-    }
-}
-
 static void phys_sections_free(PhysPageMap *map)
 {
     while (map->sections_nb > 0) {
-        MemoryRegionSection *section = &map->sections[--map->sections_nb];
-        phys_section_destroy(section->mr);
+        MemoryRegion *mr = map->sections[--map->sections_nb].mr;
+        memory_region_unref(mr);
+        if (mr->subpage)
+            object_unref(OBJECT(mr));
     }
     g_free(map->sections);
     g_free(map->nodes);
@@ -2600,6 +2589,12 @@ static int subpage_register (subpage_t *mmio, uint32_t start, uint32_t end,
     return 0;
 }
 
+static void subpage_obj_free(void *obj)
+{
+    subpage_t *subpage = container_of(obj, subpage_t, iomem);
+    g_free(subpage);
+}
+
 static subpage_t *subpage_init(AddressSpace *as, hwaddr base)
 {
     subpage_t *mmio;
@@ -2610,6 +2605,8 @@ static subpage_t *subpage_init(AddressSpace *as, hwaddr base)
     memory_region_init_io(&mmio->iomem, NULL, &subpage_ops, mmio,
                           NULL, TARGET_PAGE_SIZE);
     mmio->iomem.subpage = true;
+    /* obj->free is called when final refcount on obj is dropped */
+    OBJECT(&mmio->iomem)->free = subpage_obj_free;
 #if defined(DEBUG_SUBPAGE)
     printf("%s: %p base " TARGET_FMT_plx " len %08x\n", __func__,
            mmio, base, TARGET_PAGE_SIZE);
@@ -2907,7 +2904,7 @@ static MemTxResult address_space_write_continue(AddressSpace *as, hwaddr addr,
         l = len;
         rcu_read_lock();
         mr = address_space_translate(as, addr, &addr1, &l, true);
-        memory_region_ref(mr);
+        object_ref(OBJECT(mr));
         rcu_read_unlock();
 
         if (!memory_access_is_direct(mr, true)) {
@@ -2950,7 +2947,7 @@ static MemTxResult address_space_write_continue(AddressSpace *as, hwaddr addr,
             invalidate_and_set_dirty(mr, addr1, l);
         }
 
-        memory_region_unref(mr);
+        object_unref(OBJECT(mr));
         if (release_lock) {
             qemu_mutex_unlock_iothread();
             release_lock = false;
