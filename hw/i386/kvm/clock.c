@@ -37,6 +37,7 @@ typedef struct KVMClockState {
     /*< public >*/
 
     uint64_t clock;
+    uint64_t host_clock;
     bool clock_valid;
 
     /* whether machine type supports reliable KVM_GET_CLOCK */
@@ -155,6 +156,8 @@ static void kvmclock_vm_state_change(void *opaque, int running,
     int cap_clock_ctrl = kvm_check_extension(kvm_state, KVM_CAP_KVMCLOCK_CTRL);
     int ret;
 
+    fprintf(stderr, "%s: running %d, valid %d, reliable %d, clock %lu\n",
+                    __func__, running, s->clock_valid, s->clock_is_reliable, s->clock);
     if (running) {
         struct kvm_clock_data data = {};
 
@@ -258,8 +261,40 @@ static const VMStateDescription kvmclock_reliable_get_clock = {
 static int kvmclock_pre_save(void *opaque)
 {
     KVMClockState *s = opaque;
+    struct timespec now;
 
     kvm_update_clock(s);
+
+    /* Record host wall clock so that we can calculate the time between vm_save() and vm_load() */
+    clock_gettime(CLOCK_REALTIME, &now);
+    s->host_clock = now.tv_sec * 1000000000ULL + now.tv_nsec;
+
+    return 0;
+}
+
+static int kvmclock_post_load(void *opaque, int version_id)
+{
+    KVMClockState *s = opaque;
+    struct timespec now;
+    uint64_t ns;
+
+    if (s->host_clock == 0) {
+        return 0;
+    }
+
+    fprintf(stderr, "%s: clock %lu before %lu\n", __func__, s->host_clock , s->clock);
+    /* Upon load, adjust guest clock according to host clock if possible */
+    clock_gettime(CLOCK_REALTIME, &now);
+    ns = now.tv_sec * 1000000000ULL + now.tv_nsec;
+    if (ns > s->host_clock) {
+        uint64_t diff;
+
+        diff = ns - s->host_clock;
+        if (diff + s->clock > s->clock) {
+            s->clock += diff;
+        }
+        fprintf(stderr, "%s: diff %lu\n", __func__, diff);
+    }
 
     return 0;
 }
@@ -269,8 +304,10 @@ static const VMStateDescription kvmclock_vmsd = {
     .version_id = 1,
     .minimum_version_id = 1,
     .pre_save = kvmclock_pre_save,
+    .post_load = kvmclock_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_UINT64(clock, KVMClockState),
+        VMSTATE_UINT64(host_clock, KVMClockState),
         VMSTATE_END_OF_LIST()
     },
     .subsections = (const VMStateDescription * []) {
