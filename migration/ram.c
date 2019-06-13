@@ -196,7 +196,7 @@ static void ramblock_recv_map_init(void)
 {
     RAMBlock *rb;
 
-    RAMBLOCK_FOREACH_NOT_IGNORED(rb) {
+    RAMBLOCK_FOREACH_MIGRATABLE(rb) {
         assert(!rb->receivedmap);
         rb->receivedmap = bitmap_new(rb->max_length >> qemu_target_page_bits());
     }
@@ -2749,7 +2749,7 @@ void ram_postcopy_migrated_memory_release(MigrationState *ms)
 {
     struct RAMBlock *block;
 
-    RAMBLOCK_FOREACH_NOT_IGNORED(block) {
+    RAMBLOCK_FOREACH_MIGRATABLE(block) {
         unsigned long *bitmap = block->bmap;
         unsigned long range = block->used_length >> TARGET_PAGE_BITS;
         unsigned long run_start = find_next_zero_bit(bitmap, range, 0);
@@ -2827,7 +2827,7 @@ static int postcopy_each_ram_send_discard(MigrationState *ms)
     struct RAMBlock *block;
     int ret;
 
-    RAMBLOCK_FOREACH_NOT_IGNORED(block) {
+    RAMBLOCK_FOREACH_MIGRATABLE(block) {
         PostcopyDiscardState *pds =
             postcopy_discard_send_init(ms, block->idstr);
 
@@ -3035,7 +3035,7 @@ int ram_postcopy_send_discard_bitmap(MigrationState *ms)
     rs->last_sent_block = NULL;
     rs->last_page = 0;
 
-    RAMBLOCK_FOREACH_NOT_IGNORED(block) {
+    RAMBLOCK_FOREACH_MIGRATABLE(block) {
         unsigned long pages = block->used_length >> TARGET_PAGE_BITS;
         unsigned long *bitmap = block->bmap;
         unsigned long *unsentmap = block->unsentmap;
@@ -3183,18 +3183,12 @@ static int ram_state_init(RAMState **rsp)
     qemu_mutex_init(&(*rsp)->src_page_req_mutex);
     QSIMPLEQ_INIT(&(*rsp)->src_page_requests);
 
-    /*
-     * Count the total number of pages used by ram blocks not including any
-     * gaps due to alignment or unplugs.
-     */
-    (*rsp)->migration_dirty_pages = ram_bytes_total() >> TARGET_PAGE_BITS;
-
     ram_state_reset(*rsp);
 
     return 0;
 }
 
-static void ram_list_init_bitmaps(void)
+static void ram_list_init_bitmaps(RAMState *rs)
 {
     RAMBlock *block;
     unsigned long pages;
@@ -3205,6 +3199,11 @@ static void ram_list_init_bitmaps(void)
             pages = block->max_length >> TARGET_PAGE_BITS;
             block->bmap = bitmap_new(pages);
             bitmap_set(block->bmap, 0, pages);
+            /*
+             * Count the total number of pages used by ram blocks not including any
+             * gaps due to alignment or unplugs.
+             */
+            rs->migration_dirty_pages += pages;
             if (migrate_postcopy_ram()) {
                 block->unsentmap = bitmap_new(pages);
                 bitmap_set(block->unsentmap, 0, pages);
@@ -3220,7 +3219,7 @@ static void ram_init_bitmaps(RAMState *rs)
     qemu_mutex_lock_ramlist();
     rcu_read_lock();
 
-    ram_list_init_bitmaps();
+    ram_list_init_bitmaps(rs);
     memory_global_dirty_log_start();
     migration_bitmap_sync_precopy(rs);
 
@@ -3256,7 +3255,7 @@ static void ram_state_resume_prepare(RAMState *rs, QEMUFile *out)
      * about dirty page logging as well.
      */
 
-    RAMBLOCK_FOREACH_NOT_IGNORED(block) {
+    RAMBLOCK_FOREACH_MIGRATABLE(block) {
         pages += bitmap_count_one(block->bmap,
                                   block->used_length >> TARGET_PAGE_BITS);
     }
@@ -3362,18 +3361,14 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
 
     rcu_read_lock();
 
-    qemu_put_be64(f, ram_bytes_total_common(true) | RAM_SAVE_FLAG_MEM_SIZE);
+    qemu_put_be64(f, ram_bytes_total_common(false) | RAM_SAVE_FLAG_MEM_SIZE);
 
-    RAMBLOCK_FOREACH_MIGRATABLE(block) {
+    RAMBLOCK_FOREACH_NOT_IGNORED(block) {
         qemu_put_byte(f, strlen(block->idstr));
         qemu_put_buffer(f, (uint8_t *)block->idstr, strlen(block->idstr));
         qemu_put_be64(f, block->used_length);
         if (migrate_postcopy_ram() && block->page_size != qemu_host_page_size) {
             qemu_put_be64(f, block->page_size);
-        }
-        if (migrate_ignore_shared()) {
-            qemu_put_be64(f, block->mr->addr);
-            qemu_put_byte(f, ramblock_is_ignored(block) ? 1 : 0);
         }
     }
 
@@ -3888,7 +3883,7 @@ int colo_init_ram_cache(void)
     RAMBlock *block;
 
     rcu_read_lock();
-    RAMBLOCK_FOREACH_NOT_IGNORED(block) {
+    RAMBLOCK_FOREACH_MIGRATABLE(block) {
         block->colo_cache = qemu_anon_ram_alloc(block->used_length,
                                                 NULL,
                                                 false);
@@ -3909,7 +3904,7 @@ int colo_init_ram_cache(void)
     if (ram_bytes_total()) {
         RAMBlock *block;
 
-        RAMBLOCK_FOREACH_NOT_IGNORED(block) {
+        RAMBLOCK_FOREACH_MIGRATABLE(block) {
             unsigned long pages = block->max_length >> TARGET_PAGE_BITS;
 
             block->bmap = bitmap_new(pages);
@@ -3925,7 +3920,7 @@ int colo_init_ram_cache(void)
 
 out_locked:
 
-    RAMBLOCK_FOREACH_NOT_IGNORED(block) {
+    RAMBLOCK_FOREACH_MIGRATABLE(block) {
         if (block->colo_cache) {
             qemu_anon_ram_free(block->colo_cache, block->used_length);
             block->colo_cache = NULL;
@@ -3942,14 +3937,14 @@ void colo_release_ram_cache(void)
     RAMBlock *block;
 
     memory_global_dirty_log_stop();
-    RAMBLOCK_FOREACH_NOT_IGNORED(block) {
+    RAMBLOCK_FOREACH_MIGRATABLE(block) {
         g_free(block->bmap);
         block->bmap = NULL;
     }
 
     rcu_read_lock();
 
-    RAMBLOCK_FOREACH_NOT_IGNORED(block) {
+    RAMBLOCK_FOREACH_MIGRATABLE(block) {
         if (block->colo_cache) {
             qemu_anon_ram_free(block->colo_cache, block->used_length);
             block->colo_cache = NULL;
@@ -3986,7 +3981,7 @@ static int ram_load_cleanup(void *opaque)
 {
     RAMBlock *rb;
 
-    RAMBLOCK_FOREACH_NOT_IGNORED(rb) {
+    RAMBLOCK_FOREACH_MIGRATABLE(rb) {
         if (ramblock_is_pmem(rb)) {
             pmem_persist(rb->host, rb->used_length);
         }
@@ -3995,7 +3990,7 @@ static int ram_load_cleanup(void *opaque)
     xbzrle_load_cleanup();
     compress_threads_load_cleanup();
 
-    RAMBLOCK_FOREACH_NOT_IGNORED(rb) {
+    RAMBLOCK_FOREACH_MIGRATABLE(rb) {
         g_free(rb->receivedmap);
         rb->receivedmap = NULL;
     }
@@ -4195,7 +4190,7 @@ static void colo_flush_ram_cache(void)
 
     memory_global_dirty_log_sync();
     rcu_read_lock();
-    RAMBLOCK_FOREACH_NOT_IGNORED(block) {
+    RAMBLOCK_FOREACH_MIGRATABLE(block) {
         migration_bitmap_sync_range(ram_state, block, 0, block->used_length);
     }
     rcu_read_unlock();
@@ -4312,6 +4307,7 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
                 id[len] = 0;
                 length = qemu_get_be64(f);
 
+                error_report("block %s len %d\n", id, len);
                 block = qemu_ram_block_by_name(id);
                 if (block && !qemu_ram_is_migratable(block)) {
                     error_report("block %s should not be migrated !", id);
@@ -4335,23 +4331,6 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
                                          "(local) %zd != %" PRId64,
                                          id, block->page_size,
                                          remote_page_size);
-                            ret = -EINVAL;
-                        }
-                    }
-                    if (migrate_ignore_shared()) {
-                        hwaddr addr = qemu_get_be64(f);
-                        bool ignored = qemu_get_byte(f);
-                        if (ignored != ramblock_is_ignored(block)) {
-                            error_report("RAM block %s should %s be migrated",
-                                         id, ignored ? "" : "not");
-                            ret = -EINVAL;
-                        }
-                        if (ramblock_is_ignored(block) &&
-                            block->mr->addr != addr) {
-                            error_report("Mismatched GPAs for block %s "
-                                         "%" PRId64 "!= %" PRId64,
-                                         id, (uint64_t)addr,
-                                         (uint64_t)block->mr->addr);
                             ret = -EINVAL;
                         }
                     }
@@ -4425,7 +4404,7 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
 static bool ram_has_postcopy(void *opaque)
 {
     RAMBlock *rb;
-    RAMBLOCK_FOREACH_NOT_IGNORED(rb) {
+    RAMBLOCK_FOREACH_MIGRATABLE(rb) {
         if (ramblock_is_pmem(rb)) {
             info_report("Block: %s, host: %p is a nvdimm memory, postcopy"
                          "is not supported now!", rb->idstr, rb->host);
