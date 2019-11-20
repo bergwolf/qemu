@@ -171,6 +171,10 @@ void fuse_cmdline_help(void)
            "                               default: no_writeback\n"
            "    -o xattr|no_xattr          enable/disable xattr\n"
            "                               default: no_xattr\n"
+           "    -o shared|no_shared        enable/disable shared cache\n"
+           "                               default: no_shared\n"
+           "                               please start 'ireg' daemon before "
+           "using shared cache\n"
            );
 }
 
