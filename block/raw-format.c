@@ -548,6 +548,12 @@ static const char *const raw_strong_runtime_opts[] = {
     NULL
 };
 
+static int raw_io_uring_get_params(BlockDriverState *bs,
+                                   BlockDriverIoUringParams *bip)
+{
+    return bdrv_io_uring_get_params(bs->file->bs, bip);
+}
+
 BlockDriver bdrv_raw = {
     .format_name          = "raw",
     .instance_size        = sizeof(BDRVRawState),
@@ -581,6 +587,7 @@ BlockDriver bdrv_raw = {
     .bdrv_has_zero_init_truncate = &raw_has_zero_init_truncate,
     .strong_runtime_opts  = raw_strong_runtime_opts,
     .mutable_opts         = mutable_opts,
+    .bdrv_io_uring_get_params = raw_io_uring_get_params,
 };
 
 static void bdrv_raw_init(void)

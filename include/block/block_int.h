@@ -474,6 +474,8 @@ struct BlockDriver {
     /* io queue for linux-aio */
     void (*bdrv_io_plug)(BlockDriverState *bs);
     void (*bdrv_io_unplug)(BlockDriverState *bs);
+    int (*bdrv_io_uring_get_params)(BlockDriverState *bs,
+                                    BlockDriverIoUringParams *bip);
 
     /**
      * Try to get @bs's logical and physical block size.

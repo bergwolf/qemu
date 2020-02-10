@@ -3078,6 +3078,24 @@ static int coroutine_fn raw_co_copy_range_to(BlockDriverState *bs,
     return raw_thread_pool_submit(bs, handle_aiocb_copy_range, &acb);
 }
 
+static int raw_io_uring_get_params(BlockDriverState *bs,
+                                   BlockDriverIoUringParams *bip)
+{
+    BDRVRawState *s = bs->opaque;
+
+#ifdef CONFIG_LINUX_IO_URING
+    LuringState *aio;
+
+    if (!s->use_linux_io_uring)
+        return -ENOTSUP;
+
+    aio = aio_get_linux_io_uring(bdrv_get_aio_context(bs));
+    return luring_get_params(bs, aio, bip);
+#else
+    return -ENOTSUP;
+#endif
+}
+
 BlockDriver bdrv_file = {
     .format_name = "file",
     .protocol_name = "file",
@@ -3108,6 +3126,7 @@ BlockDriver bdrv_file = {
     .bdrv_refresh_limits = raw_refresh_limits,
     .bdrv_io_plug = raw_aio_plug,
     .bdrv_io_unplug = raw_aio_unplug,
+    .bdrv_io_uring_get_params = raw_io_uring_get_params,
     .bdrv_attach_aio_context = raw_aio_attach_aio_context,
 
     .bdrv_co_truncate = raw_co_truncate,

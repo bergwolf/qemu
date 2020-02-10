@@ -3179,6 +3179,23 @@ void bdrv_io_unplug(BlockDriverState *bs)
     }
 }
 
+int bdrv_io_uring_get_params(BlockDriverState *bs,
+                             BlockDriverIoUringParams *bip)
+{
+    BlockDriver *drv = bs->drv;
+
+    /* if bs->drv == NULL, bs is closed, so there's nothing to do here */
+    if (!drv) {
+        return -ENOMEDIUM;
+    }
+
+    if (!drv->bdrv_io_uring_get_params) {
+        return -ENOTSUP;
+    }
+
+    return drv->bdrv_io_uring_get_params(bs, bip);
+}
+
 void bdrv_register_buf(BlockDriverState *bs, void *host, size_t size)
 {
     BdrvChild *child;

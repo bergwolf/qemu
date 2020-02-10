@@ -225,6 +225,8 @@ void blk_add_remove_bs_notifier(BlockBackend *blk, Notifier *notify);
 void blk_add_insert_bs_notifier(BlockBackend *blk, Notifier *notify);
 void blk_io_plug(BlockBackend *blk);
 void blk_io_unplug(BlockBackend *blk);
+int blk_io_uring_get_params(BlockBackend *blk,
+                            BlockDriverIoUringParams *bip);
 BlockAcctStats *blk_get_stats(BlockBackend *blk);
 BlockBackendRootState *blk_get_root_state(BlockBackend *blk);
 void blk_update_root_state(BlockBackend *blk);

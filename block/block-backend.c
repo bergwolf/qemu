@@ -2047,6 +2047,19 @@ void blk_io_unplug(BlockBackend *blk)
     }
 }
 
+int blk_io_uring_get_params(BlockBackend *blk,
+                            BlockDriverIoUringParams *bip)
+{
+    BlockDriverState *bs = blk_bs(blk);
+
+    if (!bs) {
+        return -ENOMEDIUM;
+    }
+
+    return bdrv_io_uring_get_params(bs, bip);
+}
+
+
 BlockAcctStats *blk_get_stats(BlockBackend *blk)
 {
     return &blk->stats;

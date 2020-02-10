@@ -595,6 +595,9 @@ int bdrv_probe_geometry(BlockDriverState *bs, HDGeometry *geo);
 
 void bdrv_io_plug(BlockDriverState *bs);
 void bdrv_io_unplug(BlockDriverState *bs);
+int bdrv_io_uring_get_params(BlockDriverState *bs,
+                             BlockDriverIoUringParams *bip);
+
 
 /**
  * bdrv_parent_drained_begin_single:
