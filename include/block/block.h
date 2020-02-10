@@ -32,6 +32,10 @@ typedef struct BlockDriverInfo {
     bool needs_compressed_writes;
 } BlockDriverInfo;
 
+typedef struct BlockDriverIoUringParams {
+
+} BlockDriverIoUringParams;
+
 typedef struct BlockFragInfo {
     uint64_t allocated_clusters;
     uint64_t total_clusters;

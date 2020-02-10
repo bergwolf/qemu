@@ -315,6 +315,13 @@ void luring_io_unplug(BlockDriverState *bs, LuringState *s)
     }
 }
 
+int luring_get_params(BlockDriverState *bs, LuringState *s,
+                      BlockDriverIoUringParams *bip)
+{
+
+    return 0;
+}
+
 /**
  * luring_do_submit:
  * @fd: file descriptor for I/O
