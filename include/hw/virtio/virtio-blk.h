@@ -61,6 +61,8 @@ typedef struct VirtIOBlock {
     struct VirtIOBlockDataPlane *dataplane;
     uint64_t host_features;
     size_t config_size;
+    bool io_uring_passthrough;
+    BlockDriverIoUringParams io_uring_params;
 } VirtIOBlock;
 
 typedef struct VirtIOBlockReq {

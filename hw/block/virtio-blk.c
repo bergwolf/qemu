@@ -1190,6 +1190,17 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
         return;
     }
 
+    if (virtio_has_feature(s->host_features, VIRTIO_BLK_F_IO_URING)) {
+        int ret = blk_io_uring_get_params(conf->conf.blk, &s->io_uring_params);
+
+        if (ret) {
+            error_setg(errp, "io_uring not available");
+            return;
+        }
+
+        s->io_uring_passthrough = true;
+    }
+
     virtio_blk_set_config_size(s, s->host_features);
 
     virtio_init(vdev, "virtio-blk", VIRTIO_ID_BLOCK, s->config_size);
@@ -1286,6 +1297,8 @@ static Property virtio_blk_properties[] = {
                        conf.max_write_zeroes_sectors, BDRV_REQUEST_MAX_SECTORS),
     DEFINE_PROP_BOOL("x-enable-wce-if-config-wce", VirtIOBlock,
                      conf.x_enable_wce_if_config_wce, true),
+    DEFINE_PROP_BIT64("io-uring-pt", VirtIOBlock, host_features,
+                      VIRTIO_BLK_F_IO_URING, false),
     DEFINE_PROP_END_OF_LIST(),
 };
 
