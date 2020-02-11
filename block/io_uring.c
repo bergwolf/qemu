@@ -49,6 +49,7 @@ typedef struct LuringQueue {
 typedef struct LuringState {
     AioContext *aio_context;
 
+    struct io_uring_params params;
     struct io_uring ring;
 
     /* io queue for submit at batch.  Protected by AioContext lock. */
@@ -420,7 +421,7 @@ LuringState *luring_init(Error **errp)
 
     trace_luring_init_state(s, sizeof(*s));
 
-    rc = io_uring_queue_init(MAX_ENTRIES, ring, 0);
+    rc = io_uring_queue_init_params(MAX_ENTRIES, ring, &s->params);
     if (rc < 0) {
         error_setg_errno(errp, errno, "failed to init linux io_uring ring");
         g_free(s);
