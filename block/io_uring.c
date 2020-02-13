@@ -10,6 +10,7 @@
  */
 #include "qemu/osdep.h"
 #include <liburing.h>
+#include "block/io_uring_pt.h"
 #include "qemu-common.h"
 #include "block/aio.h"
 #include "qemu/queue.h"

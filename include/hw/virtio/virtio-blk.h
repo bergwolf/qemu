@@ -19,6 +19,9 @@
 #include "hw/block/block.h"
 #include "sysemu/iothread.h"
 #include "sysemu/block-backend.h"
+#ifdef CONFIG_LINUX_IO_URING
+#include "block/io_uring_pt.h"
+#endif
 
 #define TYPE_VIRTIO_BLK "virtio-blk-device"
 #define VIRTIO_BLK(obj) \
@@ -62,7 +65,9 @@ typedef struct VirtIOBlock {
     uint64_t host_features;
     size_t config_size;
     bool io_uring_passthrough;
+#ifdef CONFIG_LINUX_IO_URING
     BlockDriverIoUringParams io_uring_params;
+#endif
 } VirtIOBlock;
 
 typedef struct VirtIOBlockReq {

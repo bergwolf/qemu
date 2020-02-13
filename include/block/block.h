@@ -14,6 +14,7 @@
 typedef struct BlockDriver BlockDriver;
 typedef struct BdrvChild BdrvChild;
 typedef struct BdrvChildRole BdrvChildRole;
+typedef struct BlockDriverIoUringParams BlockDriverIoUringParams;
 
 typedef struct BlockDriverInfo {
     /* in bytes, 0 if irrelevant */
@@ -31,10 +32,6 @@ typedef struct BlockDriverInfo {
      */
     bool needs_compressed_writes;
 } BlockDriverInfo;
-
-typedef struct BlockDriverIoUringParams {
-
-} BlockDriverIoUringParams;
 
 typedef struct BlockFragInfo {
     uint64_t allocated_clusters;
