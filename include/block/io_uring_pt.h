@@ -3,14 +3,23 @@
 
 #include <liburing.h>
 
-struct BlockDriverIoUringParams {
+#define IO_URING_MR_BASE        0xc0000000
+#define IO_URING_MR_SIZE        (1<<20)
+
+struct virtio_blk_iouring {
+    uint64_t mr_base;
+    uint64_t mr_size;
+    uint64_t sqcq_offset;
+    uint64_t sqes_offset;
     struct io_uring_params params;
-    uint64_t sq_ptr;
-    uint64_t sq_size;
-    uint64_t sqes_ptr;
-    uint64_t sqes_size;
-    uint64_t cq_ptr;
-    uint64_t cq_size;
+};
+
+struct BlockDriverIoUringParams {
+    struct io_uring_params *params;
+    void *sqes;
+    size_t sqes_len;
+    void *sqcq;
+    size_t sqcq_len;
 };
 
 #endif /* QEMU_IO_URING_PT_H */

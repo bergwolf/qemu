@@ -32,6 +32,7 @@
 #include "hw/virtio/virtio-bus.h"
 #include "migration/qemu-file-types.h"
 #include "hw/virtio/virtio-access.h"
+#include "exec/address-spaces.h"
 
 /* Config size before the discard support (hide associated config fields) */
 #define VIRTIO_BLK_CFG_SIZE offsetof(struct virtio_blk_config, \
@@ -1191,14 +1192,53 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
     }
 
     if (virtio_has_feature(s->host_features, VIRTIO_BLK_F_IO_URING)) {
-        int ret = blk_io_uring_get_params(conf->conf.blk, &s->io_uring_params);
+        BlockDriverIoUringParams params;
+        int ret;
 
+        ret = blk_io_uring_get_params(conf->conf.blk, &params);
         if (ret) {
             error_setg(errp, "io_uring not available");
             return;
         }
 
         s->io_uring_passthrough = true;
+
+        memory_region_init_ram_ptr(&s->mr_params, OBJECT(vdev),
+                                   "virtio-blk-io-uring-params",
+                                   sizeof(s->io_uring),
+                                   &s->io_uring);
+
+        memory_region_init_ram_ptr(&s->mr_sqes, OBJECT(vdev),
+                                   "virtio-blk-io-uring-sqes",
+                                   params.sqes_len,
+                                   params.sqes);
+
+        memory_region_init_ram_ptr(&s->mr_sqcq, OBJECT(vdev),
+                                   "virtio-blk-io-uring-sqcq",
+                                   params.sqcq_len,
+                                   params.sqcq);
+
+        s->io_uring.sqes_offset = ROUND_UP(sizeof(s->io_uring),
+                                           qemu_real_host_page_size);
+        s->io_uring.sqcq_offset = ROUND_UP(s->io_uring.sqes_offset +
+                                           params.sqes_len,
+                                           qemu_real_host_page_size);
+        s->io_uring.mr_size = s->io_uring.sqes_offset +
+                              s->io_uring.sqcq_offset +
+                              params.sqcq_len;
+        s->io_uring.mr_base = IO_URING_MR_BASE;
+        memcpy(&s->io_uring.params, params.params, sizeof(s->io_uring.params));
+
+        memory_region_init(&s->mr, NULL, "io-uring", IO_URING_MR_SIZE);
+        memory_region_add_subregion(&s->mr, 0, &s->mr_params);
+        memory_region_add_subregion(&s->mr, s->io_uring.sqes_offset,
+                                    &s->mr_sqes);
+        memory_region_add_subregion(&s->mr, s->io_uring.sqcq_offset,
+                                    &s->mr_sqcq);
+
+        memory_region_add_subregion(get_system_memory(),
+                                    s->io_uring.mr_base, &s->mr);
+
     }
 
     virtio_blk_set_config_size(s, s->host_features);

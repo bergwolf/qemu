@@ -66,7 +66,13 @@ typedef struct VirtIOBlock {
     size_t config_size;
     bool io_uring_passthrough;
 #ifdef CONFIG_LINUX_IO_URING
-    BlockDriverIoUringParams io_uring_params;
+    struct virtio_blk_iouring io_uring;
+
+    /* Memory regions */
+    MemoryRegion mr;
+    MemoryRegion mr_params;
+    MemoryRegion mr_sqcq;
+    MemoryRegion mr_sqes;
 #endif
 } VirtIOBlock;
 

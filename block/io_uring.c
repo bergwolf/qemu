@@ -317,11 +317,56 @@ void luring_io_unplug(BlockDriverState *bs, LuringState *s)
     }
 }
 
+static int luring_map_rings(LuringState *s, BlockDriverIoUringParams *bip)
+{
+    struct io_uring *ring = &s->ring;
+
+    if (!ring->sq.ring_ptr || !ring->sq.sqes || !ring->cq.ring_ptr)
+        return -EINVAL;
+
+    memset(bip, 0, sizeof(*bip));
+    bip->params = &s->params;
+
+    bip->sqes_len = *ring->sq.kring_entries * sizeof(struct io_uring_sqe);
+    bip->sqes = ring->sq.sqes;
+    printf("sqes - addr: %p len: %ld val(uint64_t): %ld\n",
+            ring->sq.sqes, bip->sqes_len, *(uint64_t *)bip->sqes);
+
+    bip->sqcq_len = ring->sq.ring_sz;
+    bip->sqcq = ring->sq.ring_ptr;
+    printf("sq - addr: %p len: %ld val(uint64_t): %ld\n",
+           ring->sq.ring_ptr, bip->sqcq_len, *(uint64_t *)bip->sqcq);
+
+    if (ring->cq.ring_ptr != ring->sq.ring_ptr) {
+        //ret = madvise(ring->cq.ring_ptr, len, MADV_DONTFORK);
+        printf("TODO cq - addr: %p len: %ld\n", ring->cq.ring_ptr,
+                ring->cq.ring_sz);
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+static int luring_register_guest_mem(LuringState *s)
+{
+    return 0;
+}
+
 int luring_get_params(BlockDriverState *bs, LuringState *s,
                       BlockDriverIoUringParams *bip)
 {
+    int ret;
+    printf("ring_fd: %d\n", s->ring.ring_fd);
 
-    return 0;
+    ret = luring_map_rings(s, bip);
+    if (ret)
+        return ret;
+
+    ret = luring_register_guest_mem(s);
+    if (ret)
+        return ret;
+
+    return ret;
 }
 
 /**

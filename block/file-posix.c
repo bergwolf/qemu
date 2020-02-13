@@ -3078,6 +3078,10 @@ static int coroutine_fn raw_co_copy_range_to(BlockDriverState *bs,
     return raw_thread_pool_submit(bs, handle_aiocb_copy_range, &acb);
 }
 
+/*
+ * TODO:
+ *      - split in several functions? (enable/disable)
+ */
 static int raw_io_uring_get_params(BlockDriverState *bs,
                                    BlockDriverIoUringParams *bip)
 {
