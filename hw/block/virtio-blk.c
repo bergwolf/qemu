@@ -1192,10 +1192,25 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
     }
 
     if (virtio_has_feature(s->host_features, VIRTIO_BLK_F_IO_URING)) {
-        BlockDriverIoUringParams params;
+        BlockDriverIoUringPTParams bip;
+        MemoryRegion *ram_memory;
         int ret;
 
-        ret = blk_io_uring_get_params(conf->conf.blk, &params);
+        ram_memory = (MemoryRegion *) object_resolve_path("ram-mem", NULL);
+        if (!ram_memory) {
+            error_setg(errp, "ram-mem not found!");
+            return;
+        }
+
+        printf("ram-mem - size: %ld ram_addr 0x%lx pointer %p\n",
+                memory_region_size(ram_memory),
+                memory_region_get_ram_addr(ram_memory),
+                memory_region_get_ram_ptr(ram_memory));
+
+        ret = blk_io_uring_passthrough(conf->conf.blk,
+                memory_region_get_ram_ptr(ram_memory),
+                memory_region_size(ram_memory),
+                &bip);
         if (ret) {
             error_setg(errp, "io_uring not available");
             return;
@@ -1210,24 +1225,26 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
 
         memory_region_init_ram_ptr(&s->mr_sqes, OBJECT(vdev),
                                    "virtio-blk-io-uring-sqes",
-                                   params.sqes_len,
-                                   params.sqes);
+                                   bip.sqes_len,
+                                   bip.sqes);
 
         memory_region_init_ram_ptr(&s->mr_sqcq, OBJECT(vdev),
                                    "virtio-blk-io-uring-sqcq",
-                                   params.sqcq_len,
-                                   params.sqcq);
+                                   bip.sqcq_len,
+                                   bip.sqcq);
 
         s->io_uring.sqes_offset = ROUND_UP(sizeof(s->io_uring),
                                            qemu_real_host_page_size);
         s->io_uring.sqcq_offset = ROUND_UP(s->io_uring.sqes_offset +
-                                           params.sqes_len,
+                                           bip.sqes_len,
                                            qemu_real_host_page_size);
         s->io_uring.mr_size = s->io_uring.sqes_offset +
                               s->io_uring.sqcq_offset +
-                              params.sqcq_len;
+                              bip.sqcq_len;
         s->io_uring.mr_base = IO_URING_MR_BASE;
-        memcpy(&s->io_uring.params, params.params, sizeof(s->io_uring.params));
+        s->io_uring.phy_offset =
+            (uint64_t) memory_region_get_ram_ptr(ram_memory);
+        memcpy(&s->io_uring.params, bip.params, sizeof(s->io_uring.params));
 
         memory_region_init(&s->mr, NULL, "io-uring", IO_URING_MR_SIZE);
         memory_region_add_subregion(&s->mr, 0, &s->mr_params);

@@ -14,7 +14,7 @@
 typedef struct BlockDriver BlockDriver;
 typedef struct BdrvChild BdrvChild;
 typedef struct BdrvChildRole BdrvChildRole;
-typedef struct BlockDriverIoUringParams BlockDriverIoUringParams;
+typedef struct BlockDriverIoUringPTParams BlockDriverIoUringPTParams;
 
 typedef struct BlockDriverInfo {
     /* in bytes, 0 if irrelevant */
@@ -592,8 +592,9 @@ int bdrv_probe_geometry(BlockDriverState *bs, HDGeometry *geo);
 
 void bdrv_io_plug(BlockDriverState *bs);
 void bdrv_io_unplug(BlockDriverState *bs);
-int bdrv_io_uring_get_params(BlockDriverState *bs,
-                             BlockDriverIoUringParams *bip);
+int bdrv_io_uring_passthrough(BlockDriverState *bs,
+                              void *guest_ram, size_t guest_ram_size,
+                              BlockDriverIoUringPTParams *bip);
 
 
 /**

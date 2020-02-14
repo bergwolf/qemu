@@ -2047,8 +2047,9 @@ void blk_io_unplug(BlockBackend *blk)
     }
 }
 
-int blk_io_uring_get_params(BlockBackend *blk,
-                            BlockDriverIoUringParams *bip)
+int blk_io_uring_passthrough(BlockBackend *blk,
+                             void *guest_ram, size_t guest_ram_size,
+                             BlockDriverIoUringPTParams *bip)
 {
     BlockDriverState *bs = blk_bs(blk);
 
@@ -2056,7 +2057,7 @@ int blk_io_uring_get_params(BlockBackend *blk,
         return -ENOMEDIUM;
     }
 
-    return bdrv_io_uring_get_params(bs, bip);
+    return bdrv_io_uring_passthrough(bs, guest_ram, guest_ram_size, bip);
 }
 
 
