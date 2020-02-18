@@ -3095,7 +3095,7 @@ static int raw_io_uring_passthrough(BlockDriverState *bs,
         return -ENOTSUP;
 
     aio = aio_get_linux_io_uring(bdrv_get_aio_context(bs));
-    return luring_passthrough(bs, aio, guest_ram, guest_ram_size, bip);
+    return luring_passthrough(bs, aio, s->fd, guest_ram, guest_ram_size, bip);
 #else
     return -ENOTSUP;
 #endif

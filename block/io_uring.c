@@ -19,6 +19,9 @@
 #include "qemu/coroutine.h"
 #include "qapi/error.h"
 #include "trace.h"
+#include "qemu/timer.h"
+#include <sys/syscall.h>
+
 
 /* io_uring ring size */
 #define MAX_ENTRIES 128
@@ -58,6 +61,8 @@ typedef struct LuringState {
 
     /* I/O completion processing.  Only runs in I/O thread.  */
     QEMUBH *completion_bh;
+
+    QEMUTimer *timer_pt;
 } LuringState;
 
 /**
@@ -351,7 +356,12 @@ static int luring_pt_register_guest_mem(LuringState *s)
     return 0;
 }
 
-int luring_passthrough(BlockDriverState *bs, LuringState *s,
+static int luring_pt_register_fd(LuringState *s, int fd)
+{
+    return io_uring_register_files(&s->ring, &fd, 1);
+}
+
+int luring_passthrough(BlockDriverState *bs, LuringState *s, int fd,
                        void *guest_ram, size_t guest_ram_size,
                        BlockDriverIoUringPTParams *bip)
 {
@@ -366,7 +376,48 @@ int luring_passthrough(BlockDriverState *bs, LuringState *s,
     if (ret)
         return ret;
 
+    ret = luring_pt_register_fd(s, fd);
+    if (ret)
+        return ret;
+
+    timer_mod(s->timer_pt, qemu_clock_get_us(QEMU_CLOCK_HOST) + 1000);
+
+    if (s->aio_context)
+        luring_detach_aio_context(s, s->aio_context);
+
     return ret;
+}
+
+static inline bool sq_ring_needs_enter(struct io_uring *ring, unsigned *flags)
+{
+	if (!(ring->flags & IORING_SETUP_SQPOLL))
+		return true;
+	if (IO_URING_READ_ONCE(*ring->sq.kflags) & IORING_SQ_NEED_WAKEUP) {
+		*flags |= IORING_ENTER_SQ_WAKEUP;
+		return true;
+	}
+
+	return false;
+}
+
+static int __sys_io_uring_enter(int fd, unsigned to_submit, unsigned min_complete,
+			 unsigned flags, sigset_t *sig)
+{
+	return syscall(426, fd, to_submit, min_complete,
+			flags, sig, _NSIG / 8);
+}
+
+
+static void luring_pt_poll(void *data)
+{
+    LuringState *s = (LuringState *)data;
+    unsigned int flags = 0;
+
+    if (sq_ring_needs_enter(&s->ring, &flags)) {
+	__sys_io_uring_enter(s->ring.ring_fd, 0, 0, flags, NULL);
+    }
+
+    timer_mod(s->timer_pt, qemu_clock_get_us(QEMU_CLOCK_HOST) + 1000);
 }
 
 /**
@@ -465,6 +516,11 @@ LuringState *luring_init(Error **errp)
     LuringState *s = g_new0(LuringState, 1);
     struct io_uring *ring = &s->ring;
 
+    /*
+     * TODO: pass fd as parameter and register fd, it is needed for SQPOLL
+     */
+    s->params.flags = IORING_SETUP_SQPOLL;
+
     trace_luring_init_state(s, sizeof(*s));
 
     rc = io_uring_queue_init_params(MAX_ENTRIES, ring, &s->params);
@@ -475,6 +531,7 @@ LuringState *luring_init(Error **errp)
     }
 
     ioq_init(&s->io_q);
+    s->timer_pt = timer_new_us(QEMU_CLOCK_HOST, luring_pt_poll, s);
     return s;
 
 }
