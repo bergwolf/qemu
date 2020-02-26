@@ -455,7 +455,7 @@ static int luring_queue_init(LuringState *s, bool sqpoll)
 
     if (sqpoll) {
         s->params.flags = IORING_SETUP_SQPOLL;
-        s->params.sq_thread_idle = 60000;
+        s->params.sq_thread_idle = 10000;
     }
 
     trace_luring_init_state(s, sizeof(*s));
