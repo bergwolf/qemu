@@ -322,72 +322,6 @@ void luring_io_unplug(BlockDriverState *bs, LuringState *s)
     }
 }
 
-static int luring_pt_get_params(LuringState *s, BlockDriverIoUringPTParams *bip)
-{
-    struct io_uring *ring = &s->ring;
-
-    if (!ring->sq.ring_ptr || !ring->sq.sqes || !ring->cq.ring_ptr)
-        return -EINVAL;
-
-    memset(bip, 0, sizeof(*bip));
-    bip->params = &s->params;
-
-    bip->sqes_len = *ring->sq.kring_entries * sizeof(struct io_uring_sqe);
-    bip->sqes = ring->sq.sqes;
-    printf("sqes - addr: %p len: %ld val(uint64_t): %ld\n",
-            ring->sq.sqes, bip->sqes_len, *(uint64_t *)bip->sqes);
-
-    bip->sqcq_len = ring->sq.ring_sz;
-    bip->sqcq = ring->sq.ring_ptr;
-    printf("sq - addr: %p len: %ld val(uint64_t): %ld\n",
-           ring->sq.ring_ptr, bip->sqcq_len, *(uint64_t *)bip->sqcq);
-
-    if (ring->cq.ring_ptr != ring->sq.ring_ptr) {
-        printf("TODO cq - addr: %p len: %ld\n", ring->cq.ring_ptr,
-                ring->cq.ring_sz);
-        return -EINVAL;
-    }
-
-    return 0;
-}
-
-static int luring_pt_register_guest_mem(LuringState *s)
-{
-    return 0;
-}
-
-static int luring_pt_register_fd(LuringState *s, int fd)
-{
-    return io_uring_register_files(&s->ring, &fd, 1);
-}
-
-int luring_passthrough(BlockDriverState *bs, LuringState *s, int fd,
-                       void *guest_ram, size_t guest_ram_size,
-                       BlockDriverIoUringPTParams *bip)
-{
-    int ret;
-    printf("ring_fd: %d\n", s->ring.ring_fd);
-
-    ret = luring_pt_get_params(s, bip);
-    if (ret)
-        return ret;
-
-    ret = luring_pt_register_guest_mem(s);
-    if (ret)
-        return ret;
-
-    ret = luring_pt_register_fd(s, fd);
-    if (ret)
-        return ret;
-
-    timer_mod(s->timer_pt, qemu_clock_get_us(QEMU_CLOCK_HOST) + 1000);
-
-    if (s->aio_context)
-        luring_detach_aio_context(s, s->aio_context);
-
-    return ret;
-}
-
 static inline bool sq_ring_needs_enter(struct io_uring *ring, unsigned *flags)
 {
 	if (!(ring->flags & IORING_SETUP_SQPOLL))
@@ -412,12 +346,14 @@ static void luring_pt_poll(void *data)
 {
     LuringState *s = (LuringState *)data;
     unsigned int flags = 0;
+    static int kick = 0;
 
     if (sq_ring_needs_enter(&s->ring, &flags)) {
 	__sys_io_uring_enter(s->ring.ring_fd, 0, 0, flags, NULL);
+	printf("kick %d\n", kick++);
     }
 
-    timer_mod(s->timer_pt, qemu_clock_get_us(QEMU_CLOCK_HOST) + 1000);
+    timer_mod(s->timer_pt, qemu_clock_get_us(QEMU_CLOCK_HOST) + 1000000);
 }
 
 /**
@@ -510,35 +446,128 @@ void luring_attach_aio_context(LuringState *s, AioContext *new_context)
                        qemu_luring_completion_cb, NULL, qemu_luring_poll_cb, s);
 }
 
-LuringState *luring_init(Error **errp)
+static int luring_queue_init(LuringState *s, bool sqpoll)
 {
-    int rc;
-    LuringState *s = g_new0(LuringState, 1);
     struct io_uring *ring = &s->ring;
+    int rc;
 
-    /*
-     * TODO: pass fd as parameter and register fd, it is needed for SQPOLL
-     */
-    s->params.flags = IORING_SETUP_SQPOLL;
+    memset(&s->params, 0, sizeof(s->params));
+
+    if (sqpoll) {
+        s->params.flags = IORING_SETUP_SQPOLL;
+        s->params.sq_thread_idle = 60000;
+    }
 
     trace_luring_init_state(s, sizeof(*s));
 
     rc = io_uring_queue_init_params(MAX_ENTRIES, ring, &s->params);
     if (rc < 0) {
-        error_setg_errno(errp, errno, "failed to init linux io_uring ring");
+        return -errno;
+    }
+
+    if (sqpoll) {
+        /* TODO: implement notification from the guest */
+        s->timer_pt = timer_new_us(QEMU_CLOCK_HOST, luring_pt_poll, s);
+    }
+
+    return 0;
+}
+
+static void luring_queue_exit(LuringState *s)
+{
+    io_uring_queue_exit(&s->ring);
+}
+
+static int luring_pt_get_params(LuringState *s, BlockDriverIoUringPTParams *bip)
+{
+    struct io_uring *ring = &s->ring;
+
+    if (!ring->sq.ring_ptr || !ring->sq.sqes || !ring->cq.ring_ptr)
+        return -EINVAL;
+
+    memset(bip, 0, sizeof(*bip));
+    bip->params = &s->params;
+
+    bip->sqes_len = *ring->sq.kring_entries * sizeof(struct io_uring_sqe);
+    bip->sqes = ring->sq.sqes;
+    printf("sqes - addr: %p len: %ld val(uint64_t): %ld\n",
+            ring->sq.sqes, bip->sqes_len, *(uint64_t *)bip->sqes);
+
+    bip->sqcq_len = ring->sq.ring_sz;
+    bip->sqcq = ring->sq.ring_ptr;
+    printf("sq - addr: %p len: %ld val(uint64_t): %ld\n",
+           ring->sq.ring_ptr, bip->sqcq_len, *(uint64_t *)bip->sqcq);
+
+    if (ring->cq.ring_ptr != ring->sq.ring_ptr) {
+        printf("TODO cq - addr: %p len: %ld\n", ring->cq.ring_ptr,
+                ring->cq.ring_sz);
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+static int luring_pt_register_guest_mem(LuringState *s)
+{
+    return 0;
+}
+
+static int luring_pt_register_fd(LuringState *s, int fd)
+{
+    return io_uring_register_files(&s->ring, &fd, 1);
+}
+
+int luring_passthrough(BlockDriverState *bs, LuringState *s, int fd,
+                       void *guest_ram, size_t guest_ram_size,
+                       BlockDriverIoUringPTParams *bip)
+{
+    int ret;
+    printf("ring_fd: %d\n", s->ring.ring_fd);
+
+    if (s->aio_context)
+        luring_detach_aio_context(s, s->aio_context);
+
+    luring_queue_exit(s);
+
+    ret = luring_queue_init(s, true);
+    if (ret)
+        return ret;
+
+    ret = luring_pt_get_params(s, bip);
+    if (ret)
+        return ret;
+
+    ret = luring_pt_register_guest_mem(s);
+    if (ret)
+        return ret;
+
+    ret = luring_pt_register_fd(s, fd);
+    if (ret)
+        return ret;
+
+    timer_mod(s->timer_pt, qemu_clock_get_us(QEMU_CLOCK_HOST) + 1000);
+
+    return ret;
+}
+
+LuringState *luring_init(Error **errp)
+{
+    LuringState *s = g_new0(LuringState, 1);
+    int rc;
+
+    rc = luring_queue_init(s, false);
+    if (rc < 0) {
+        error_setg_errno(errp, -rc, "failed to init linux io_uring ring");
         g_free(s);
         return NULL;
     }
 
     ioq_init(&s->io_q);
-    s->timer_pt = timer_new_us(QEMU_CLOCK_HOST, luring_pt_poll, s);
     return s;
-
 }
 
 void luring_cleanup(LuringState *s)
 {
-    io_uring_queue_exit(&s->ring);
     g_free(s);
     trace_luring_cleanup_state(s);
 }
