@@ -61,8 +61,6 @@ typedef struct LuringState {
 
     /* I/O completion processing.  Only runs in I/O thread.  */
     QEMUBH *completion_bh;
-
-    QEMUTimer *timer_pt;
 } LuringState;
 
 /**
@@ -341,21 +339,6 @@ static int __sys_io_uring_enter(int fd, unsigned to_submit, unsigned min_complet
 			flags, sig, _NSIG / 8);
 }
 
-
-static void luring_pt_poll(void *data)
-{
-    LuringState *s = (LuringState *)data;
-    unsigned int flags = 0;
-    static int kick = 0;
-
-    if (sq_ring_needs_enter(&s->ring, &flags)) {
-	__sys_io_uring_enter(s->ring.ring_fd, 0, 0, flags, NULL);
-	printf("kick %d\n", kick++);
-    }
-
-    timer_mod(s->timer_pt, qemu_clock_get_us(QEMU_CLOCK_HOST) + 1000000);
-}
-
 /**
  * luring_do_submit:
  * @fd: file descriptor for I/O
@@ -465,11 +448,6 @@ static int luring_queue_init(LuringState *s, bool sqpoll)
         return -errno;
     }
 
-    if (sqpoll) {
-        /* TODO: implement notification from the guest */
-        s->timer_pt = timer_new_us(QEMU_CLOCK_HOST, luring_pt_poll, s);
-    }
-
     return 0;
 }
 
@@ -544,8 +522,6 @@ int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
     ret = luring_pt_register_fd(s, fd);
     if (ret)
         return ret;
-
-    //timer_mod(s->timer_pt, qemu_clock_get_us(QEMU_CLOCK_HOST) + 1000);
 
     return ret;
 }
