@@ -2047,9 +2047,9 @@ void blk_io_unplug(BlockBackend *blk)
     }
 }
 
-int blk_io_uring_passthrough(BlockBackend *blk,
-                             void *guest_ram, size_t guest_ram_size,
-                             BlockDriverIoUringPTParams *bip)
+int blk_io_uring_pt_init(BlockBackend *blk,
+                         void *guest_ram, size_t guest_ram_size,
+                         BlockDriverIoUringPTParams *bip)
 {
     BlockDriverState *bs = blk_bs(blk);
 
@@ -2057,9 +2057,19 @@ int blk_io_uring_passthrough(BlockBackend *blk,
         return -ENOMEDIUM;
     }
 
-    return bdrv_io_uring_passthrough(bs, guest_ram, guest_ram_size, bip);
+    return bdrv_io_uring_pt_init(bs, guest_ram, guest_ram_size, bip);
 }
 
+int blk_io_uring_pt_kick(BlockBackend *blk, BlockDriverIoUringPTKick *kick)
+{
+    BlockDriverState *bs = blk_bs(blk);
+
+    if (!bs) {
+        return -ENOMEDIUM;
+    }
+
+    return bdrv_io_uring_pt_kick(bs, kick);
+}
 
 BlockAcctStats *blk_get_stats(BlockBackend *blk)
 {

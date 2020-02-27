@@ -68,9 +68,11 @@ void luring_detach_aio_context(LuringState *s, AioContext *old_context);
 void luring_attach_aio_context(LuringState *s, AioContext *new_context);
 void luring_io_plug(BlockDriverState *bs, LuringState *s);
 void luring_io_unplug(BlockDriverState *bs, LuringState *s);
-int luring_passthrough(BlockDriverState *bs, LuringState *s, int fd,
-                       void *guest_ram, size_t guest_ram_size,
-                       BlockDriverIoUringPTParams *bip);
+int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
+                   void *guest_ram, size_t guest_ram_size,
+                   BlockDriverIoUringPTParams *bip);
+int luring_pt_kick(BlockDriverState *bs, LuringState *s,
+                   BlockDriverIoUringPTKick *kick);
 #endif
 
 #ifdef _WIN32

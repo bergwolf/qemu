@@ -548,12 +548,18 @@ static const char *const raw_strong_runtime_opts[] = {
     NULL
 };
 
-static int raw_io_uring_passthrough(BlockDriverState *bs,
-                                    void *guest_ram, size_t guest_ram_size,
-                                    BlockDriverIoUringPTParams *bip)
+static int raw_io_uring_pt_init(BlockDriverState *bs,
+                                void *guest_ram, size_t guest_ram_size,
+                                BlockDriverIoUringPTParams *bip)
 {
-    return bdrv_io_uring_passthrough(bs->file->bs, guest_ram, guest_ram_size,
-                                     bip);
+    return bdrv_io_uring_pt_init(bs->file->bs, guest_ram, guest_ram_size,
+                                 bip);
+}
+
+static int raw_io_uring_pt_kick(BlockDriverState *bs,
+                                BlockDriverIoUringPTKick *kick)
+{
+    return bdrv_io_uring_pt_kick(bs->file->bs, kick);
 }
 
 BlockDriver bdrv_raw = {
@@ -589,7 +595,8 @@ BlockDriver bdrv_raw = {
     .bdrv_has_zero_init_truncate = &raw_has_zero_init_truncate,
     .strong_runtime_opts  = raw_strong_runtime_opts,
     .mutable_opts         = mutable_opts,
-    .bdrv_io_uring_passthrough = raw_io_uring_passthrough,
+    .bdrv_io_uring_pt_init = raw_io_uring_pt_init,
+    .bdrv_io_uring_pt_kick = raw_io_uring_pt_kick,
 };
 
 static void bdrv_raw_init(void)

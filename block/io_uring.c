@@ -517,9 +517,9 @@ static int luring_pt_register_fd(LuringState *s, int fd)
     return io_uring_register_files(&s->ring, &fd, 1);
 }
 
-int luring_passthrough(BlockDriverState *bs, LuringState *s, int fd,
-                       void *guest_ram, size_t guest_ram_size,
-                       BlockDriverIoUringPTParams *bip)
+int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
+                   void *guest_ram, size_t guest_ram_size,
+                   BlockDriverIoUringPTParams *bip)
 {
     int ret;
     printf("ring_fd: %d\n", s->ring.ring_fd);
@@ -529,7 +529,7 @@ int luring_passthrough(BlockDriverState *bs, LuringState *s, int fd,
 
     luring_queue_exit(s);
 
-    ret = luring_queue_init(s, true);
+    ret = luring_queue_init(s, false);
     if (ret)
         return ret;
 
@@ -545,7 +545,29 @@ int luring_passthrough(BlockDriverState *bs, LuringState *s, int fd,
     if (ret)
         return ret;
 
-    timer_mod(s->timer_pt, qemu_clock_get_us(QEMU_CLOCK_HOST) + 1000);
+    //timer_mod(s->timer_pt, qemu_clock_get_us(QEMU_CLOCK_HOST) + 1000);
+
+    return ret;
+}
+
+
+int luring_pt_kick(BlockDriverState *bs, LuringState *s,
+                   BlockDriverIoUringPTKick *kick)
+{
+    static int kick_i = 0;
+    int ret;
+
+    printf("luring_pt_kick to_submit %u min_complete %u flags %u\n",
+           kick->enter.to_submit, kick->enter.min_complete,
+           kick->enter.flags);
+
+    ret = __sys_io_uring_enter(s->ring.ring_fd, kick->enter.to_submit,
+                               kick->enter.min_complete, kick->enter.flags,
+                               NULL);
+    if (ret < 0)
+        ret = -errno;
+
+    printf("luring_pt_kick %d\n", kick_i++);
 
     return ret;
 }

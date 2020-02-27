@@ -3082,9 +3082,9 @@ static int coroutine_fn raw_co_copy_range_to(BlockDriverState *bs,
  * TODO:
  *      - split in several functions? (enable/disable)
  */
-static int raw_io_uring_passthrough(BlockDriverState *bs,
-                                    void *guest_ram, size_t guest_ram_size,
-                                    BlockDriverIoUringPTParams *bip)
+static int raw_io_uring_pt_init(BlockDriverState *bs,
+                                void *guest_ram, size_t guest_ram_size,
+                                BlockDriverIoUringPTParams *bip)
 {
     BDRVRawState *s = bs->opaque;
 
@@ -3095,7 +3095,25 @@ static int raw_io_uring_passthrough(BlockDriverState *bs,
         return -ENOTSUP;
 
     aio = aio_get_linux_io_uring(bdrv_get_aio_context(bs));
-    return luring_passthrough(bs, aio, s->fd, guest_ram, guest_ram_size, bip);
+    return luring_pt_init(bs, aio, s->fd, guest_ram, guest_ram_size, bip);
+#else
+    return -ENOTSUP;
+#endif
+}
+
+static int raw_io_uring_pt_kick(BlockDriverState *bs,
+                                BlockDriverIoUringPTKick *kick)
+{
+    BDRVRawState *s = bs->opaque;
+
+#ifdef CONFIG_LINUX_IO_URING
+    LuringState *aio;
+
+    if (!s->use_linux_io_uring)
+        return -ENOTSUP;
+
+    aio = aio_get_linux_io_uring(bdrv_get_aio_context(bs));
+    return luring_pt_kick(bs, aio, kick);
 #else
     return -ENOTSUP;
 #endif
@@ -3131,7 +3149,8 @@ BlockDriver bdrv_file = {
     .bdrv_refresh_limits = raw_refresh_limits,
     .bdrv_io_plug = raw_aio_plug,
     .bdrv_io_unplug = raw_aio_unplug,
-    .bdrv_io_uring_passthrough = raw_io_uring_passthrough,
+    .bdrv_io_uring_pt_init = raw_io_uring_pt_init,
+    .bdrv_io_uring_pt_kick = raw_io_uring_pt_kick,
     .bdrv_attach_aio_context = raw_aio_attach_aio_context,
 
     .bdrv_co_truncate = raw_co_truncate,

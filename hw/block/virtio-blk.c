@@ -1123,16 +1123,27 @@ static const BlockDevOps virtio_block_ops = {
 static uint64_t virtio_blk_io_uring_kick_read(void *opaque, hwaddr addr,
                                                  unsigned size)
 {
-    return 0;
+    VirtIODevice *vdev = opaque;
+    VirtIOBlock *s = VIRTIO_BLK(vdev);
+
+    printf("read addr: %lu size: %u ret: %d\n", addr, size,
+           s->io_uring_enter_ret);
+
+    return s->io_uring_enter_ret;
 }
 
 static void virtio_blk_io_uring_kick_write(void *opaque, hwaddr addr,
                                               uint64_t val, unsigned size)
 {
-    //VirtIODevice *vdev = opaque;
-    //VirtIOBlock *s = VIRTIO_BLK(vdev);
+    VirtIODevice *vdev = opaque;
+    VirtIOBlock *s = VIRTIO_BLK(vdev);
+    BlockDriverIoUringPTKick kick;
 
-    printf("addr: %lu val: %lu size: %u\n", addr, val, size);
+    kick.enter = s->io_uring.enter;
+
+    s->io_uring_enter_ret = blk_io_uring_pt_kick(s->blk, &kick);
+    printf("write addr: %lu val: %lu size: %u ret: %d\n", addr, val, size,
+           s->io_uring_enter_ret);
 }
 
 static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
@@ -1231,7 +1242,7 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
                 memory_region_get_ram_addr(ram_memory),
                 memory_region_get_ram_ptr(ram_memory));
 
-        ret = blk_io_uring_passthrough(conf->conf.blk,
+        ret = blk_io_uring_pt_init(conf->conf.blk,
                 memory_region_get_ram_ptr(ram_memory),
                 memory_region_size(ram_memory),
                 &bip);

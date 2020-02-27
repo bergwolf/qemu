@@ -7,6 +7,12 @@
 #define IO_URING_MR_SIZE        (1<<20)
 #define IO_URING_KICK_SIZE        1024
 
+struct virtio_blk_iouring_enter {
+    unsigned int to_submit;
+    unsigned int min_complete;
+    unsigned int flags;
+};
+
 struct virtio_blk_iouring {
     uint64_t mr_base;
     uint64_t mr_size;
@@ -15,6 +21,7 @@ struct virtio_blk_iouring {
     uint64_t sqes_offset;
     uint64_t kick_offset;
     struct io_uring_params params;
+    struct virtio_blk_iouring_enter enter;
 };
 
 struct BlockDriverIoUringPTParams {
@@ -25,4 +32,7 @@ struct BlockDriverIoUringPTParams {
     size_t sqcq_len;
 };
 
+struct BlockDriverIoUringPTKick {
+    struct virtio_blk_iouring_enter enter;
+};
 #endif /* QEMU_IO_URING_PT_H */

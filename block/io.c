@@ -3179,9 +3179,9 @@ void bdrv_io_unplug(BlockDriverState *bs)
     }
 }
 
-int bdrv_io_uring_passthrough(BlockDriverState *bs,
-                              void *guest_ram, size_t guest_ram_size,
-                              BlockDriverIoUringPTParams *bip)
+int bdrv_io_uring_pt_init(BlockDriverState *bs,
+                          void *guest_ram, size_t guest_ram_size,
+                          BlockDriverIoUringPTParams *bip)
 {
     BlockDriver *drv = bs->drv;
 
@@ -3190,11 +3190,27 @@ int bdrv_io_uring_passthrough(BlockDriverState *bs,
         return -ENOMEDIUM;
     }
 
-    if (!drv->bdrv_io_uring_passthrough) {
+    if (!drv->bdrv_io_uring_pt_init) {
         return -ENOTSUP;
     }
 
-    return drv->bdrv_io_uring_passthrough(bs, guest_ram, guest_ram_size, bip);
+    return drv->bdrv_io_uring_pt_init(bs, guest_ram, guest_ram_size, bip);
+}
+
+int bdrv_io_uring_pt_kick(BlockDriverState *bs, BlockDriverIoUringPTKick *kick)
+{
+    BlockDriver *drv = bs->drv;
+
+    /* if bs->drv == NULL, bs is closed, so there's nothing to do here */
+    if (!drv) {
+        return -ENOMEDIUM;
+    }
+
+    if (!drv->bdrv_io_uring_pt_kick) {
+        return -ENOTSUP;
+    }
+
+    return drv->bdrv_io_uring_pt_kick(bs, kick);
 }
 
 void bdrv_register_buf(BlockDriverState *bs, void *host, size_t size)
