@@ -507,7 +507,7 @@ int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
 
     luring_queue_exit(s);
 
-    ret = luring_queue_init(s, false);
+    ret = luring_queue_init(s, true);
     if (ret)
         return ret;
 
