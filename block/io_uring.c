@@ -530,20 +530,17 @@ int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
 int luring_pt_kick(BlockDriverState *bs, LuringState *s,
                    BlockDriverIoUringPTKick *kick)
 {
-    static int kick_i = 0;
     int ret;
 
-    printf("luring_pt_kick to_submit %u min_complete %u flags %u\n",
-           kick->enter.to_submit, kick->enter.min_complete,
-           kick->enter.flags);
+    //printf("luring_pt_kick to_submit %u min_complete %u flags %u\n",
+    //       kick->enter.to_submit, kick->enter.min_complete,
+    //       kick->enter.flags);
 
     ret = __sys_io_uring_enter(s->ring.ring_fd, kick->enter.to_submit,
                                kick->enter.min_complete, kick->enter.flags,
                                NULL);
     if (ret < 0)
         ret = -errno;
-
-    printf("luring_pt_kick %d\n", kick_i++);
 
     return ret;
 }

@@ -1126,8 +1126,8 @@ static uint64_t virtio_blk_io_uring_kick_read(void *opaque, hwaddr addr,
     VirtIODevice *vdev = opaque;
     VirtIOBlock *s = VIRTIO_BLK(vdev);
 
-    printf("read addr: %lu size: %u ret: %d\n", addr, size,
-           s->io_uring_enter_ret);
+    //printf("read addr: %lu size: %u ret: %d\n", addr, size,
+    //       s->io_uring_enter_ret);
 
     return s->io_uring_enter_ret;
 }
@@ -1142,8 +1142,8 @@ static void virtio_blk_io_uring_kick_write(void *opaque, hwaddr addr,
     kick.enter = s->io_uring.enter;
 
     s->io_uring_enter_ret = blk_io_uring_pt_kick(s->blk, &kick);
-    printf("write addr: %lu val: %lu size: %u ret: %d\n", addr, val, size,
-           s->io_uring_enter_ret);
+    //printf("write addr: %lu val: %lu size: %u ret: %d\n", addr, val, size,
+    //       s->io_uring_enter_ret);
 }
 
 static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
