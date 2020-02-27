@@ -1120,13 +1120,13 @@ static const BlockDevOps virtio_block_ops = {
     .resize_cb = virtio_blk_resize,
 };
 
-static uint64_t virtio_blk_io_uring_db_read(void *opaque, hwaddr addr,
+static uint64_t virtio_blk_io_uring_kick_read(void *opaque, hwaddr addr,
                                                  unsigned size)
 {
     return 0;
 }
 
-static void virtio_blk_io_uring_db_write(void *opaque, hwaddr addr,
+static void virtio_blk_io_uring_kick_write(void *opaque, hwaddr addr,
                                               uint64_t val, unsigned size)
 {
     //VirtIODevice *vdev = opaque;
@@ -1207,9 +1207,9 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
     }
 
     if (virtio_has_feature(s->host_features, VIRTIO_BLK_F_IO_URING)) {
-        static const MemoryRegionOps virtio_blk_io_uring_db_ops = {
-            .read = virtio_blk_io_uring_db_read,
-            .write = virtio_blk_io_uring_db_write,
+        static const MemoryRegionOps virtio_blk_io_uring_kick_ops = {
+            .read = virtio_blk_io_uring_kick_read,
+            .write = virtio_blk_io_uring_kick_write,
             .valid = {
                 .min_access_size = 1,
                 .max_access_size = 4,
@@ -1257,22 +1257,22 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
                                    bip.sqcq_len,
                                    bip.sqcq);
 
-        memory_region_init_io(&s->mr_doorbell, OBJECT(vdev),
-                              &virtio_blk_io_uring_db_ops, vdev,
-                              "virtio-blk-io-uring-doorbell",
-                              IO_URING_DB_SIZE);
+        memory_region_init_io(&s->mr_kick, OBJECT(vdev),
+                              &virtio_blk_io_uring_kick_ops, vdev,
+                              "virtio-blk-io-uring-kick",
+                              IO_URING_KICK_SIZE);
 
         s->io_uring.sqes_offset = ROUND_UP(sizeof(s->io_uring),
                                            qemu_real_host_page_size);
         s->io_uring.sqcq_offset = ROUND_UP(s->io_uring.sqes_offset +
                                            bip.sqes_len,
                                            qemu_real_host_page_size);
-        s->io_uring.doorbell_offset = ROUND_UP(s->io_uring.sqcq_offset +
+        s->io_uring.kick_offset = ROUND_UP(s->io_uring.sqcq_offset +
                                                bip.sqcq_len,
                                                qemu_real_host_page_size);
-        s->io_uring.mr_size = s->io_uring.doorbell_offset +
-                              IO_URING_DB_SIZE;
-        printf("doorbell_offset %lu mr_size %lu\n", s->io_uring.doorbell_offset,
+        s->io_uring.mr_size = s->io_uring.kick_offset +
+                              IO_URING_KICK_SIZE;
+        printf("kick_offset %lu mr_size %lu\n", s->io_uring.kick_offset,
                 s->io_uring.mr_size);
         s->io_uring.mr_base = IO_URING_MR_BASE;
         s->io_uring.phy_offset =
@@ -1285,8 +1285,8 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
                                     &s->mr_sqes);
         memory_region_add_subregion(&s->mr, s->io_uring.sqcq_offset,
                                     &s->mr_sqcq);
-        memory_region_add_subregion(&s->mr, s->io_uring.doorbell_offset,
-                                    &s->mr_doorbell);
+        memory_region_add_subregion(&s->mr, s->io_uring.kick_offset,
+                                    &s->mr_kick);
 
         memory_region_add_subregion(get_system_memory(),
                                     s->io_uring.mr_base, &s->mr);

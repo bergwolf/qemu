@@ -73,7 +73,7 @@ typedef struct VirtIOBlock {
     MemoryRegion mr_params;
     MemoryRegion mr_sqcq;
     MemoryRegion mr_sqes;
-    MemoryRegion mr_doorbell;
+    MemoryRegion mr_kick;
 #endif
 } VirtIOBlock;
 
