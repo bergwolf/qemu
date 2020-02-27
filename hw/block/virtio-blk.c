@@ -1402,6 +1402,8 @@ static Property virtio_blk_properties[] = {
                      conf.x_enable_wce_if_config_wce, true),
     DEFINE_PROP_BIT64("io-uring-pt", VirtIOBlock, host_features,
                       VIRTIO_BLK_F_IO_URING, false),
+    DEFINE_PROP_BIT64("kthread", VirtIOBlock, host_features,
+                      VIRTIO_BLK_F_KTHREAD, false),
     DEFINE_PROP_END_OF_LIST(),
 };
 
