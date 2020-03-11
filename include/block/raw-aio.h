@@ -65,7 +65,7 @@ void luring_cleanup(LuringState *s);
 int coroutine_fn luring_co_submit(BlockDriverState *bs, LuringState *s, int fd,
                                 uint64_t offset, QEMUIOVector *qiov, int type);
 void luring_detach_aio_context(LuringState *s, AioContext *old_context);
-void luring_attach_aio_context(LuringState *s, AioContext *new_context);
+void luring_attach_aio_context(LuringState *s, AioContext *new_context, int fd);
 void luring_io_plug(BlockDriverState *bs, LuringState *s);
 void luring_io_unplug(BlockDriverState *bs, LuringState *s);
 int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,

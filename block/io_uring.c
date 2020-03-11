@@ -355,6 +355,11 @@ static int luring_do_submit(int fd, LuringAIOCB *luringcb, LuringState *s,
 {
     int ret;
     struct io_uring_sqe *sqes = &luringcb->sqeq;
+    bool fixed_file = (s->ring.flags & IORING_SETUP_SQPOLL);
+
+    if (fixed_file) {
+        fd = 0;
+    }
 
     switch (type) {
     case QEMU_AIO_WRITE:
@@ -373,6 +378,11 @@ static int luring_do_submit(int fd, LuringAIOCB *luringcb, LuringState *s,
                         __func__, type);
         abort();
     }
+
+    if (fixed_file) {
+        sqes->flags |= IOSQE_FIXED_FILE;
+    }
+
     io_uring_sqe_set_data(sqes, luringcb);
 
     QSIMPLEQ_INSERT_TAIL(&s->io_q.submit_queue, luringcb, next);
@@ -421,8 +431,17 @@ void luring_detach_aio_context(LuringState *s, AioContext *old_context)
     s->aio_context = NULL;
 }
 
-void luring_attach_aio_context(LuringState *s, AioContext *new_context)
+void luring_attach_aio_context(LuringState *s, AioContext *new_context, int fd)
 {
+    if (s->ring.flags & IORING_SETUP_SQPOLL) {
+        int ret = io_uring_register_files(&s->ring, &fd, 1);
+        if (ret) {
+            abort();
+        }
+
+        printf("registered fd %d\n", fd);
+    }
+
     s->aio_context = new_context;
     s->completion_bh = aio_bh_new(new_context, qemu_luring_completion_bh, s);
     aio_set_fd_handler(s->aio_context, s->ring.ring_fd, false,
@@ -438,7 +457,7 @@ static int luring_queue_init(LuringState *s, bool sqpoll)
 
     if (sqpoll) {
         s->params.flags = IORING_SETUP_SQPOLL;
-        s->params.sq_thread_idle = 10000;
+        //s->params.sq_thread_idle = 10000;
     }
 
     trace_luring_init_state(s, sizeof(*s));
@@ -446,6 +465,12 @@ static int luring_queue_init(LuringState *s, bool sqpoll)
     rc = io_uring_queue_init_params(MAX_ENTRIES, ring, &s->params);
     if (rc < 0) {
         return -errno;
+    }
+
+    if (!(s->params.features & IORING_FEAT_NODROP)) {
+        fprintf(stderr, "IORING_FEAT_NODROP not supported!\n");
+    } else {
+        printf("IORING_FEAT_NODROP supported!\n");
     }
 
     return 0;

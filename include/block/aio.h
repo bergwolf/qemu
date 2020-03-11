@@ -483,7 +483,7 @@ struct LinuxAioState *aio_setup_linux_aio(AioContext *ctx, Error **errp);
 struct LinuxAioState *aio_get_linux_aio(AioContext *ctx);
 
 /* Setup the LuringState bound to this AioContext */
-struct LuringState *aio_setup_linux_io_uring(AioContext *ctx, Error **errp);
+struct LuringState *aio_setup_linux_io_uring(AioContext *ctx, int fd, Error **errp);
 
 /* Return the LuringState bound to this AioContext */
 struct LuringState *aio_get_linux_io_uring(AioContext *ctx);

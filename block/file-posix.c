@@ -614,7 +614,7 @@ static int raw_open_common(BlockDriverState *bs, QDict *options,
 
 #ifdef CONFIG_LINUX_IO_URING
     if (s->use_linux_io_uring) {
-        if (!aio_setup_linux_io_uring(bdrv_get_aio_context(bs), errp)) {
+        if (!aio_setup_linux_io_uring(bdrv_get_aio_context(bs), s->fd, errp)) {
             error_prepend(errp, "Unable to use io_uring: ");
             goto fail;
         }
@@ -2033,7 +2033,7 @@ static void raw_aio_attach_aio_context(BlockDriverState *bs,
 #ifdef CONFIG_LINUX_IO_URING
     if (s->use_linux_io_uring) {
         Error *local_err;
-        if (!aio_setup_linux_io_uring(new_context, &local_err)) {
+        if (!aio_setup_linux_io_uring(new_context, s->fd, &local_err)) {
             error_reportf_err(local_err, "Unable to use linux io_uring, "
                                          "falling back to thread pool: ");
             s->use_linux_io_uring = false;

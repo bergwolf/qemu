@@ -386,7 +386,7 @@ LinuxAioState *aio_get_linux_aio(AioContext *ctx)
 #endif
 
 #ifdef CONFIG_LINUX_IO_URING
-LuringState *aio_setup_linux_io_uring(AioContext *ctx, Error **errp)
+LuringState *aio_setup_linux_io_uring(AioContext *ctx, int fd, Error **errp)
 {
     if (ctx->linux_io_uring) {
         return ctx->linux_io_uring;
@@ -397,7 +397,7 @@ LuringState *aio_setup_linux_io_uring(AioContext *ctx, Error **errp)
         return NULL;
     }
 
-    luring_attach_aio_context(ctx->linux_io_uring, ctx);
+    luring_attach_aio_context(ctx->linux_io_uring, ctx, fd);
     return ctx->linux_io_uring;
 }
 
