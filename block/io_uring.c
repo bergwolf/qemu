@@ -510,9 +510,15 @@ static int luring_pt_get_params(LuringState *s, BlockDriverIoUringPTParams *bip)
     return 0;
 }
 
-static int luring_pt_register_guest_mem(LuringState *s)
+static int luring_pt_register_guest_mem(LuringState *s, void *guest_ram,
+                                        size_t guest_ram_size)
 {
-    return 0;
+    struct iovec iov;
+
+    iov.iov_base = guest_ram;
+    iov.iov_len = guest_ram_size;
+
+    return io_uring_register_buffers(&s->ring, &iov, 1);
 }
 
 static int luring_pt_register_fd(LuringState *s, int fd)
@@ -540,7 +546,7 @@ int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
     if (ret)
         return ret;
 
-    ret = luring_pt_register_guest_mem(s);
+    ret = luring_pt_register_guest_mem(s, guest_ram, guest_ram_size);
     if (ret)
         return ret;
 
