@@ -3567,6 +3567,8 @@ static BlockDriver bdrv_host_device = {
     .bdrv_refresh_limits = raw_refresh_limits,
     .bdrv_io_plug = raw_aio_plug,
     .bdrv_io_unplug = raw_aio_unplug,
+    .bdrv_io_uring_pt_init = raw_io_uring_pt_init,
+    .bdrv_io_uring_pt_kick = raw_io_uring_pt_kick,
     .bdrv_attach_aio_context = raw_aio_attach_aio_context,
 
     .bdrv_co_truncate       = raw_co_truncate,
