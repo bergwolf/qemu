@@ -513,12 +513,16 @@ static int luring_pt_get_params(LuringState *s, BlockDriverIoUringPTParams *bip)
 static int luring_pt_register_guest_mem(LuringState *s, void *guest_ram,
                                         size_t guest_ram_size)
 {
+#if 0
     struct iovec iov;
 
     iov.iov_base = guest_ram;
     iov.iov_len = guest_ram_size;
 
     return io_uring_register_buffers(&s->ring, &iov, 1);
+#else
+    return 0;
+#endif
 }
 
 static int luring_pt_register_fd(LuringState *s, int fd)
