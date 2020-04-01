@@ -1253,22 +1253,22 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
 
         s->io_uring_passthrough = true;
 
-        memory_region_init_ram_ptr(&s->mr_params, OBJECT(vdev),
+        memory_region_init_ram_ptr(&s->mr_params, NULL,
                                    "virtio-blk-io-uring-params",
                                    sizeof(s->io_uring),
                                    &s->io_uring);
 
-        memory_region_init_ram_ptr(&s->mr_sqes, OBJECT(vdev),
+        memory_region_init_ram_ptr(&s->mr_sqes, NULL,
                                    "virtio-blk-io-uring-sqes",
                                    bip.sqes_len,
                                    bip.sqes);
 
-        memory_region_init_ram_ptr(&s->mr_sqcq, OBJECT(vdev),
+        memory_region_init_ram_ptr(&s->mr_sqcq, NULL,
                                    "virtio-blk-io-uring-sqcq",
                                    bip.sqcq_len,
                                    bip.sqcq);
 
-        memory_region_init_io(&s->mr_kick, OBJECT(vdev),
+        memory_region_init_io(&s->mr_kick, NULL,
                               &virtio_blk_io_uring_kick_ops, vdev,
                               "virtio-blk-io-uring-kick",
                               IO_URING_KICK_SIZE);
@@ -1301,7 +1301,6 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
 
         memory_region_add_subregion(get_system_memory(),
                                     s->io_uring.mr_base, &s->mr);
-
     }
 
     virtio_blk_set_config_size(s, s->host_features);
