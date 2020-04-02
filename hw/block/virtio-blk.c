@@ -1253,6 +1253,15 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
 
         s->io_uring_passthrough = true;
 
+        /*
+         * HACK: if the size is not multiple of page size, the first pages are
+         * mapped to the guest, but the last page not fully filled is not
+         * mapped and every read or write are emulated in userspace (vmexit +
+         * emulation).
+         */
+        bip.sqes_len = ROUND_UP(bip.sqes_len, qemu_real_host_page_size);
+        bip.sqcq_len = ROUND_UP(bip.sqcq_len, qemu_real_host_page_size);
+
         memory_region_init_ram_ptr(&s->mr_params, NULL,
                                    "virtio-blk-io-uring-params",
                                    sizeof(s->io_uring),
