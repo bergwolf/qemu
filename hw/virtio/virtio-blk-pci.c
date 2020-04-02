@@ -35,7 +35,12 @@ typedef struct VirtIOBlkPCI VirtIOBlkPCI;
 struct VirtIOBlkPCI {
     VirtIOPCIProxy parent_obj;
     VirtIOBlock vdev;
+    MemoryRegion membar;
 };
+
+#define VIRTIO_BLK_PCI_CACHE_BAR 2
+
+#define VIRTIO_BLK_PCI_SHMCAP_ID_IOUPT 0
 
 static Property virtio_blk_pci_properties[] = {
     DEFINE_PROP_UINT32("class", VirtIOPCIProxy, class_code, 0),
@@ -57,6 +62,23 @@ static void virtio_blk_pci_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
 
     qdev_set_parent_bus(vdev, BUS(&vpci_dev->bus));
     object_property_set_bool(OBJECT(vdev), true, "realized", errp);
+
+    if (virtio_has_feature(dev->vdev.host_features, VIRTIO_BLK_F_IO_URING)) {
+        uint64_t totalsize = pow2ceil(dev->vdev.io_uring.mr_size);
+
+        memory_region_init(&dev->membar, OBJECT(vpci_dev),
+                           "virtio-blk-pci-membar", totalsize);
+        memory_region_add_subregion(&dev->membar, 0, &dev->vdev.iou_mr);
+        virtio_pci_add_shm_cap(vpci_dev, VIRTIO_BLK_PCI_CACHE_BAR, 0, totalsize,
+                               VIRTIO_BLK_PCI_SHMCAP_ID_IOUPT);
+
+        /* After 'realized' so the memory region exists */
+        pci_register_bar(&vpci_dev->pci_dev, VIRTIO_BLK_PCI_CACHE_BAR,
+                         PCI_BASE_ADDRESS_SPACE_MEMORY |
+                         PCI_BASE_ADDRESS_MEM_PREFETCH |
+                         PCI_BASE_ADDRESS_MEM_TYPE_64,
+                         &dev->membar);
+    }
 }
 
 static void virtio_blk_pci_class_init(ObjectClass *klass, void *data)

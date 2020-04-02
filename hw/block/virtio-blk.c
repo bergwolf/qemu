@@ -1294,7 +1294,6 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
                               IO_URING_KICK_SIZE;
         printf("kick_offset %lu iou_mr_size %lu\n", s->io_uring.kick_offset,
                 s->io_uring.mr_size);
-        s->io_uring.mr_base = IO_URING_MR_BASE;
         s->io_uring.phy_offset =
             (uint64_t) memory_region_get_ram_ptr(ram_memory);
         memcpy(&s->io_uring.params, bip.params, sizeof(s->io_uring.params));
@@ -1307,8 +1306,12 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
                                     &s->iou_mr_sqcq);
         memory_region_add_subregion(&s->iou_mr, s->io_uring.kick_offset,
                                     &s->iou_mr_kick);
+#if 0
+        /* now we are using PCI to register the shared region */
+        s->io_uring.mr_base = IO_URING_MR_BASE;
         memory_region_add_subregion(get_system_memory(),
                                     s->io_uring.iou_mr_base, &s->iou_mr);
+#endif
     }
 
     virtio_blk_set_config_size(s, s->host_features);
