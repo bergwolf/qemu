@@ -1262,22 +1262,22 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
         bip.sqes_len = ROUND_UP(bip.sqes_len, qemu_real_host_page_size);
         bip.sqcq_len = ROUND_UP(bip.sqcq_len, qemu_real_host_page_size);
 
-        memory_region_init_ram_ptr(&s->mr_params, NULL,
+        memory_region_init_ram_ptr(&s->iou_mr_params, NULL,
                                    "virtio-blk-io-uring-params",
                                    sizeof(s->io_uring),
                                    &s->io_uring);
 
-        memory_region_init_ram_ptr(&s->mr_sqes, NULL,
+        memory_region_init_ram_ptr(&s->iou_mr_sqes, NULL,
                                    "virtio-blk-io-uring-sqes",
                                    bip.sqes_len,
                                    bip.sqes);
 
-        memory_region_init_ram_ptr(&s->mr_sqcq, NULL,
+        memory_region_init_ram_ptr(&s->iou_mr_sqcq, NULL,
                                    "virtio-blk-io-uring-sqcq",
                                    bip.sqcq_len,
                                    bip.sqcq);
 
-        memory_region_init_io(&s->mr_kick, NULL,
+        memory_region_init_io(&s->iou_mr_kick, NULL,
                               &virtio_blk_io_uring_kick_ops, vdev,
                               "virtio-blk-io-uring-kick",
                               IO_URING_KICK_SIZE);
@@ -1292,24 +1292,23 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
                                                qemu_real_host_page_size);
         s->io_uring.mr_size = s->io_uring.kick_offset +
                               IO_URING_KICK_SIZE;
-        printf("kick_offset %lu mr_size %lu\n", s->io_uring.kick_offset,
+        printf("kick_offset %lu iou_mr_size %lu\n", s->io_uring.kick_offset,
                 s->io_uring.mr_size);
         s->io_uring.mr_base = IO_URING_MR_BASE;
         s->io_uring.phy_offset =
             (uint64_t) memory_region_get_ram_ptr(ram_memory);
         memcpy(&s->io_uring.params, bip.params, sizeof(s->io_uring.params));
 
-        memory_region_init(&s->mr, NULL, "io-uring", IO_URING_MR_SIZE);
-        memory_region_add_subregion(&s->mr, 0, &s->mr_params);
-        memory_region_add_subregion(&s->mr, s->io_uring.sqes_offset,
-                                    &s->mr_sqes);
-        memory_region_add_subregion(&s->mr, s->io_uring.sqcq_offset,
-                                    &s->mr_sqcq);
-        memory_region_add_subregion(&s->mr, s->io_uring.kick_offset,
-                                    &s->mr_kick);
-
+        memory_region_init(&s->iou_mr, NULL, "io-uring", IO_URING_MR_SIZE);
+        memory_region_add_subregion(&s->iou_mr, 0, &s->iou_mr_params);
+        memory_region_add_subregion(&s->iou_mr, s->io_uring.sqes_offset,
+                                    &s->iou_mr_sqes);
+        memory_region_add_subregion(&s->iou_mr, s->io_uring.sqcq_offset,
+                                    &s->iou_mr_sqcq);
+        memory_region_add_subregion(&s->iou_mr, s->io_uring.kick_offset,
+                                    &s->iou_mr_kick);
         memory_region_add_subregion(get_system_memory(),
-                                    s->io_uring.mr_base, &s->mr);
+                                    s->io_uring.iou_mr_base, &s->iou_mr);
     }
 
     virtio_blk_set_config_size(s, s->host_features);

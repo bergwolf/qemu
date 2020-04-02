@@ -70,11 +70,11 @@ typedef struct VirtIOBlock {
     uint32_t io_uring_enter_ret;
 
     /* Memory regions */
-    MemoryRegion mr;
-    MemoryRegion mr_params;
-    MemoryRegion mr_sqcq;
-    MemoryRegion mr_sqes;
-    MemoryRegion mr_kick;
+    MemoryRegion iou_mr;
+    MemoryRegion iou_mr_params;
+    MemoryRegion iou_mr_sqcq;
+    MemoryRegion iou_mr_sqes;
+    MemoryRegion iou_mr_kick;
 #endif
 } VirtIOBlock;
 
