@@ -23,6 +23,7 @@ struct virtio_blk_iouring {
     uint64_t sqcq_offset;
     uint64_t sqes_offset;
     uint64_t kick_offset;
+    uint64_t userspace;
     struct io_uring_params params;
     struct virtio_blk_iouring_enter enter;
 };
