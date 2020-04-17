@@ -1255,7 +1255,7 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
         s->io_uring_passthrough = true;
 
         io_uring_size = ROUND_UP(sizeof(*s->io_uring), qemu_real_host_page_size);
-        s->io_uring = g_malloc0(io_uring_size);
+        s->io_uring = qemu_memalign(qemu_real_host_page_size, io_uring_size);
         /*
          * HACK: if the size is not multiple of page size, the first pages are
          * mapped to the guest, but the last page not fully filled is not

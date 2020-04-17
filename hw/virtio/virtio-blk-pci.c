@@ -66,6 +66,8 @@ static void virtio_blk_pci_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
     if (virtio_has_feature(dev->vdev.host_features, VIRTIO_BLK_F_IO_URING)) {
         uint64_t totalsize = pow2ceil(dev->vdev.io_uring->mr_size);
 
+        printf("totalsize %lu\n", totalsize);
+
         memory_region_init(&dev->membar, OBJECT(vpci_dev),
                            "virtio-blk-pci-membar", totalsize);
         memory_region_add_subregion(&dev->membar, 0, &dev->vdev.iou_mr);
