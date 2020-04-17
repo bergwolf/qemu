@@ -1139,7 +1139,7 @@ static void virtio_blk_io_uring_kick_write(void *opaque, hwaddr addr,
     VirtIOBlock *s = VIRTIO_BLK(vdev);
     BlockDriverIoUringPTKick kick;
 
-    kick.enter = s->io_uring.enter;
+    kick.enter = s->io_uring->enter;
 
     s->io_uring_enter_ret = blk_io_uring_pt_kick(s->blk, &kick);
     //printf("write addr: %lu val: %lu size: %u ret: %d\n", addr, val, size,
@@ -1229,6 +1229,7 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
         };
         BlockDriverIoUringPTParams bip;
         MemoryRegion *ram_memory;
+        size_t io_uring_size;
         int ret;
 
         ram_memory = (MemoryRegion *) object_resolve_path("ram-mem", NULL);
@@ -1253,6 +1254,8 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
 
         s->io_uring_passthrough = true;
 
+        io_uring_size = ROUND_UP(sizeof(*s->io_uring), qemu_real_host_page_size);
+        s->io_uring = g_malloc0(io_uring_size);
         /*
          * HACK: if the size is not multiple of page size, the first pages are
          * mapped to the guest, but the last page not fully filled is not
@@ -1264,8 +1267,8 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
 
         memory_region_init_ram_ptr(&s->iou_mr_params, NULL,
                                    "virtio-blk-io-uring-params",
-                                   sizeof(s->io_uring),
-                                   &s->io_uring);
+                                   io_uring_size,
+                                   s->io_uring);
 
         memory_region_init_ram_ptr(&s->iou_mr_sqes, NULL,
                                    "virtio-blk-io-uring-sqes",
@@ -1282,35 +1285,35 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
                               "virtio-blk-io-uring-kick",
                               IO_URING_KICK_SIZE);
 
-        s->io_uring.sqes_offset = ROUND_UP(sizeof(s->io_uring),
-                                           qemu_real_host_page_size);
-        s->io_uring.sqcq_offset = ROUND_UP(s->io_uring.sqes_offset +
-                                           bip.sqes_len,
-                                           qemu_real_host_page_size);
-        s->io_uring.kick_offset = ROUND_UP(s->io_uring.sqcq_offset +
-                                               bip.sqcq_len,
-                                               qemu_real_host_page_size);
-        s->io_uring.mr_size = s->io_uring.kick_offset +
-                              IO_URING_KICK_SIZE;
-        printf("kick_offset %lu iou_mr_size %lu\n", s->io_uring.kick_offset,
-                s->io_uring.mr_size);
-        s->io_uring.phy_offset =
+        s->io_uring->sqes_offset = ROUND_UP(io_uring_size,
+                                            qemu_real_host_page_size);
+        s->io_uring->sqcq_offset = ROUND_UP(s->io_uring->sqes_offset +
+                                            bip.sqes_len,
+                                            qemu_real_host_page_size);
+        s->io_uring->kick_offset = ROUND_UP(s->io_uring->sqcq_offset +
+                                            bip.sqcq_len,
+                                            qemu_real_host_page_size);
+        s->io_uring->mr_size = s->io_uring->kick_offset +
+                               IO_URING_KICK_SIZE;
+        printf("kick_offset %lu iou_mr_size %lu\n", s->io_uring->kick_offset,
+                s->io_uring->mr_size);
+        s->io_uring->phy_offset =
             (uint64_t) memory_region_get_ram_ptr(ram_memory);
-        memcpy(&s->io_uring.params, bip.params, sizeof(s->io_uring.params));
+        memcpy(&s->io_uring->params, bip.params, sizeof(s->io_uring->params));
 
         memory_region_init(&s->iou_mr, NULL, "io-uring", IO_URING_MR_SIZE);
         memory_region_add_subregion(&s->iou_mr, 0, &s->iou_mr_params);
-        memory_region_add_subregion(&s->iou_mr, s->io_uring.sqes_offset,
+        memory_region_add_subregion(&s->iou_mr, s->io_uring->sqes_offset,
                                     &s->iou_mr_sqes);
-        memory_region_add_subregion(&s->iou_mr, s->io_uring.sqcq_offset,
+        memory_region_add_subregion(&s->iou_mr, s->io_uring->sqcq_offset,
                                     &s->iou_mr_sqcq);
-        memory_region_add_subregion(&s->iou_mr, s->io_uring.kick_offset,
+        memory_region_add_subregion(&s->iou_mr, s->io_uring->kick_offset,
                                     &s->iou_mr_kick);
 #if 0
         /* now we are using PCI to register the shared region */
-        s->io_uring.mr_base = IO_URING_MR_BASE;
+        s->io_uring->mr_base = IO_URING_MR_BASE;
         memory_region_add_subregion(get_system_memory(),
-                                    s->io_uring.iou_mr_base, &s->iou_mr);
+                                    s->io_uring->iou_mr_base, &s->iou_mr);
 #endif
     }
 

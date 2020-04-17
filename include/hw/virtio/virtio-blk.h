@@ -66,7 +66,7 @@ typedef struct VirtIOBlock {
     size_t config_size;
     bool io_uring_passthrough;
 #ifdef CONFIG_LINUX_IO_URING
-    struct virtio_blk_iouring io_uring;
+    struct virtio_blk_iouring *io_uring;
     uint32_t io_uring_enter_ret;
 
     /* Memory regions */
