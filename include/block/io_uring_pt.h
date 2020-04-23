@@ -16,14 +16,17 @@ struct virtio_blk_iouring_enter {
     unsigned int flags;
 };
 
+#define VBI_F_BLKDEV            0x0001llu
+#define VBI_F_USERSPACE         0x0002llu
+
 struct virtio_blk_iouring {
+    uint64_t flags;
     uint64_t mr_base;
     uint64_t mr_size;
     uint64_t phy_offset;
     uint64_t sqcq_offset;
     uint64_t sqes_offset;
     uint64_t kick_offset;
-    uint64_t userspace;
     struct io_uring_params params;
     struct virtio_blk_iouring_enter enter;
 };
@@ -34,6 +37,7 @@ struct BlockDriverIoUringPTParams {
     size_t sqes_len;
     void *sqcq;
     size_t sqcq_len;
+    bool blkdev;
 };
 
 struct BlockDriverIoUringPTKick {

@@ -532,10 +532,12 @@ static int luring_pt_register_fd(LuringState *s, int fd)
 
 int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
                    void *guest_ram, size_t guest_ram_size,
-                   BlockDriverIoUringPTParams *bip)
+                   BlockDriverIoUringPTParams *bip, bool blkdev)
 {
     int ret;
     printf("ring_fd: %d\n", s->ring.ring_fd);
+
+    bip->blkdev = blkdev;
 
     if (s->aio_context)
         luring_detach_aio_context(s, s->aio_context);
