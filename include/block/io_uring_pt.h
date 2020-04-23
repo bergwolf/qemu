@@ -10,6 +10,10 @@
 #define IO_URING_MR_SIZE        (1<<20)
 #define IO_URING_KICK_SIZE        1024
 
+#ifndef VIRTIO_BLK_ID_BYTES
+#define VIRTIO_BLK_ID_BYTES	20	/* ID string length */
+#endif
+
 struct virtio_blk_iouring_enter {
     unsigned int to_submit;
     unsigned int min_complete;
@@ -29,6 +33,7 @@ struct virtio_blk_iouring {
     uint64_t kick_offset;
     struct io_uring_params params;
     struct virtio_blk_iouring_enter enter;
+    char serial_id[VIRTIO_BLK_ID_BYTES];
 };
 
 struct BlockDriverIoUringPTParams {

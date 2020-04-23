@@ -1227,6 +1227,7 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
             },
             .endianness = DEVICE_LITTLE_ENDIAN,
         };
+        const char *serial = s->conf.serial ? s->conf.serial : "";
         BlockDriverIoUringPTParams bip;
         MemoryRegion *ram_memory;
         size_t io_uring_size;
@@ -1261,6 +1262,8 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
         if (bip.blkdev) {
             s->io_uring->flags |= VBI_F_BLKDEV;
         }
+
+        strncpy(s->io_uring->serial_id, serial, VIRTIO_BLK_ID_BYTES);
 
         /*
          * HACK: if the size is not multiple of page size, the first pages are
