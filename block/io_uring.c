@@ -537,8 +537,6 @@ int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
     int ret;
     printf("ring_fd: %d\n", s->ring.ring_fd);
 
-    bip->blkdev = blkdev;
-
     if (s->aio_context)
         luring_detach_aio_context(s, s->aio_context);
 
@@ -559,6 +557,8 @@ int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
     ret = luring_pt_register_fd(s, fd);
     if (ret)
         return ret;
+
+    bip->blkdev = blkdev;
 
     return ret;
 }
