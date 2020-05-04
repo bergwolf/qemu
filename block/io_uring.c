@@ -488,7 +488,6 @@ static int luring_pt_get_params(LuringState *s, BlockDriverIoUringPTParams *bip)
     if (!ring->sq.ring_ptr || !ring->sq.sqes || !ring->cq.ring_ptr)
         return -EINVAL;
 
-    memset(bip, 0, sizeof(*bip));
     bip->params = &s->params;
 
     bip->sqes_len = *ring->sq.kring_entries * sizeof(struct io_uring_sqe);
@@ -531,7 +530,6 @@ static int luring_pt_register_fd(LuringState *s, int fd)
 }
 
 int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
-                   void *guest_ram, size_t guest_ram_size,
                    BlockDriverIoUringPTParams *bip, bool blkdev)
 {
     int ret;
@@ -550,7 +548,7 @@ int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
     if (ret)
         return ret;
 
-    ret = luring_pt_register_guest_mem(s, guest_ram, guest_ram_size);
+    ret = luring_pt_register_guest_mem(s, bip->guest_ram, bip->guest_ram_size);
     if (ret)
         return ret;
 

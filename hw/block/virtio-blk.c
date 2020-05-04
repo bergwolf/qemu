@@ -1244,10 +1244,12 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
                 memory_region_get_ram_addr(ram_memory),
                 memory_region_get_ram_ptr(ram_memory));
 
-        ret = blk_io_uring_pt_init(conf->conf.blk,
-                memory_region_get_ram_ptr(ram_memory),
-                memory_region_size(ram_memory),
-                &bip);
+        memset(&bip, 0, sizeof(bip));
+
+        bip.guest_ram = memory_region_get_ram_ptr(ram_memory);
+        bip.guest_ram_size = memory_region_size(ram_memory);
+
+        ret = blk_io_uring_pt_init(conf->conf.blk, &bip);
         if (ret) {
             error_setg(errp, "io_uring not available");
             return;

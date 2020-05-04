@@ -69,7 +69,6 @@ void luring_attach_aio_context(LuringState *s, AioContext *new_context, int fd);
 void luring_io_plug(BlockDriverState *bs, LuringState *s);
 void luring_io_unplug(BlockDriverState *bs, LuringState *s);
 int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
-                   void *guest_ram, size_t guest_ram_size,
                    BlockDriverIoUringPTParams *bip, bool blkdev);
 int luring_pt_kick(BlockDriverState *bs, LuringState *s,
                    BlockDriverIoUringPTKick *kick);

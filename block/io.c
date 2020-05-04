@@ -3179,9 +3179,7 @@ void bdrv_io_unplug(BlockDriverState *bs)
     }
 }
 
-int bdrv_io_uring_pt_init(BlockDriverState *bs,
-                          void *guest_ram, size_t guest_ram_size,
-                          BlockDriverIoUringPTParams *bip)
+int bdrv_io_uring_pt_init(BlockDriverState *bs, BlockDriverIoUringPTParams *bip)
 {
     BlockDriver *drv = bs->drv;
 
@@ -3194,7 +3192,7 @@ int bdrv_io_uring_pt_init(BlockDriverState *bs,
         return -ENOTSUP;
     }
 
-    return drv->bdrv_io_uring_pt_init(bs, guest_ram, guest_ram_size, bip);
+    return drv->bdrv_io_uring_pt_init(bs, bip);
 }
 
 int bdrv_io_uring_pt_kick(BlockDriverState *bs, BlockDriverIoUringPTKick *kick)

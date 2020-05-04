@@ -37,6 +37,11 @@ struct virtio_blk_iouring {
 };
 
 struct BlockDriverIoUringPTParams {
+    /* Filled by virtio-blk */
+    void *guest_ram;
+    size_t guest_ram_size;
+
+    /* Filled by io_uring */
     struct io_uring_params *params;
     void *sqes;
     size_t sqes_len;

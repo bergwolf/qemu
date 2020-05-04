@@ -594,7 +594,6 @@ int bdrv_probe_geometry(BlockDriverState *bs, HDGeometry *geo);
 void bdrv_io_plug(BlockDriverState *bs);
 void bdrv_io_unplug(BlockDriverState *bs);
 int bdrv_io_uring_pt_init(BlockDriverState *bs,
-                          void *guest_ram, size_t guest_ram_size,
                           BlockDriverIoUringPTParams *bip);
 int bdrv_io_uring_pt_kick(BlockDriverState *bs,
                           BlockDriverIoUringPTKick *kick);

@@ -549,11 +549,9 @@ static const char *const raw_strong_runtime_opts[] = {
 };
 
 static int raw_io_uring_pt_init(BlockDriverState *bs,
-                                void *guest_ram, size_t guest_ram_size,
                                 BlockDriverIoUringPTParams *bip)
 {
-    return bdrv_io_uring_pt_init(bs->file->bs, guest_ram, guest_ram_size,
-                                 bip);
+    return bdrv_io_uring_pt_init(bs->file->bs, bip);
 }
 
 static int raw_io_uring_pt_kick(BlockDriverState *bs,
