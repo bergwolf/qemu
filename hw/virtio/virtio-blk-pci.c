@@ -19,6 +19,8 @@
 
 #include "hw/qdev-properties.h"
 #include "hw/virtio/virtio-blk.h"
+#include "hw/pci/msix.h"
+#include "sysemu/kvm.h"
 #include "virtio-pci.h"
 #include "qapi/error.h"
 #include "qemu/module.h"
@@ -58,6 +60,10 @@ static void virtio_blk_pci_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
 
     if (vpci_dev->nvectors == DEV_NVECTORS_UNSPECIFIED) {
         vpci_dev->nvectors = dev->vdev.conf.num_queues + 1;
+        if (virtio_has_feature(dev->vdev.host_features, VIRTIO_BLK_F_IO_URING)) {
+            /* add a vector for io_uring passthrough */
+            vpci_dev->nvectors += 1;
+        }
     }
 
     qdev_set_parent_bus(vdev, BUS(&vpci_dev->bus));
@@ -65,8 +71,12 @@ static void virtio_blk_pci_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
 
     if (virtio_has_feature(dev->vdev.host_features, VIRTIO_BLK_F_IO_URING)) {
         uint64_t totalsize = pow2ceil(dev->vdev.io_uring->mr_size);
+        unsigned int vector;
 
-        printf("totalsize %lu\n", totalsize);
+        vector = vpci_dev->nvectors - 1;
+        dev->vdev.io_uring->vector = vector;
+
+        printf("totalsize %lu vector %u\n", totalsize, vector);
 
         memory_region_init(&dev->membar, OBJECT(vpci_dev),
                            "virtio-blk-pci-membar", totalsize);
@@ -83,6 +93,38 @@ static void virtio_blk_pci_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
     }
 }
 
+static void virtio_blk_pci_extrairq(VirtIOPCIProxy *vpci_dev)
+{
+    VirtIOBlkPCI *dev = VIRTIO_BLK_PCI(vpci_dev);
+    unsigned int vector;
+    int ret;
+
+    if (!virtio_has_feature(dev->vdev.host_features, VIRTIO_BLK_F_IO_URING)) {
+        return;
+    }
+
+    vector = dev->vdev.io_uring->vector;
+    printf("vector %u allocated %u\n", vector,
+           msix_nr_vectors_allocated(&vpci_dev->pci_dev));
+
+    msix_vector_use(&vpci_dev->pci_dev, vector);
+
+    ret = kvm_irqchip_add_msi_route(kvm_state, vector, &vpci_dev->pci_dev);
+    if (ret < 0) {
+        printf("kvm_irqchip_add_msi_route failed\n");
+        return;
+    }
+
+    dev->vdev.iou_virq = ret;
+
+    ret = kvm_irqchip_add_irqfd_notifier_gsi(kvm_state, &dev->vdev.iou_irq,
+                                             NULL, dev->vdev.iou_virq);
+    if (ret < 0) {
+        printf("kvm_irqchip_add_irqfd_notifier_gsi failed\n");
+        return;
+    }
+}
+
 static void virtio_blk_pci_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -92,6 +134,7 @@ static void virtio_blk_pci_class_init(ObjectClass *klass, void *data)
     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
     device_class_set_props(dc, virtio_blk_pci_properties);
     k->realize = virtio_blk_pci_realize;
+    k->extrairq = virtio_blk_pci_extrairq;
     pcidev_k->vendor_id = PCI_VENDOR_ID_REDHAT_QUMRANET;
     pcidev_k->device_id = PCI_DEVICE_ID_VIRTIO_BLOCK;
     pcidev_k->revision = VIRTIO_PCI_ABI_VERSION;

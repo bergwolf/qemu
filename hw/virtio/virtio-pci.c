@@ -719,6 +719,7 @@ static int kvm_virtio_pci_vector_use(VirtIOPCIProxy *proxy, int nvqs)
     PCIDevice *dev = &proxy->pci_dev;
     VirtIODevice *vdev = virtio_bus_get_device(&proxy->bus);
     VirtioDeviceClass *k = VIRTIO_DEVICE_GET_CLASS(vdev);
+    VirtioPCIClass *kp = VIRTIO_PCI_GET_CLASS(proxy);
     unsigned int vector;
     int ret, queue_no;
 
@@ -745,6 +746,13 @@ static int kvm_virtio_pci_vector_use(VirtIOPCIProxy *proxy, int nvqs)
             }
         }
     }
+
+    printf("proxy: %p extrairq: %p allocated: %d\n", proxy, kp->extrairq,
+           msix_nr_vectors_allocated(dev));
+    if (kp->extrairq) {
+        kp->extrairq(proxy);
+    }
+
     return 0;
 
 undo:

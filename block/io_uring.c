@@ -529,6 +529,12 @@ static int luring_pt_register_fd(LuringState *s, int fd)
     return io_uring_register_files(&s->ring, &fd, 1);
 }
 
+static int luring_pt_register_irqfd(LuringState *s, int fd)
+{
+    //return io_uring_register_eventfd_async(&s->ring, fd);
+    return io_uring_register_eventfd(&s->ring, fd);
+}
+
 int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
                    BlockDriverIoUringPTParams *bip, bool blkdev)
 {
@@ -553,6 +559,10 @@ int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
         return ret;
 
     ret = luring_pt_register_fd(s, fd);
+    if (ret)
+        return ret;
+
+    ret = luring_pt_register_irqfd(s, event_notifier_get_fd(bip->irq));
     if (ret)
         return ret;
 

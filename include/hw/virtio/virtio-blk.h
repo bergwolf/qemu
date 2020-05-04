@@ -75,6 +75,10 @@ typedef struct VirtIOBlock {
     MemoryRegion iou_mr_sqcq;
     MemoryRegion iou_mr_sqes;
     MemoryRegion iou_mr_kick;
+
+    /* Events */
+    EventNotifier iou_irq;
+    int iou_virq; /* TODO: move in VirtIOBlkPCI */
 #endif
 } VirtIOBlock;
 

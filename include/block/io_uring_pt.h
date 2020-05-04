@@ -31,6 +31,7 @@ struct virtio_blk_iouring {
     uint64_t sqcq_offset;
     uint64_t sqes_offset;
     uint64_t kick_offset;
+    uint32_t vector;
     struct io_uring_params params;
     struct virtio_blk_iouring_enter enter;
     char serial_id[VIRTIO_BLK_ID_BYTES];
@@ -40,6 +41,8 @@ struct BlockDriverIoUringPTParams {
     /* Filled by virtio-blk */
     void *guest_ram;
     size_t guest_ram_size;
+    EventNotifier *irq;
+    EventNotifier *kick;
 
     /* Filled by io_uring */
     struct io_uring_params *params;

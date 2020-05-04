@@ -1246,8 +1246,15 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
 
         memset(&bip, 0, sizeof(bip));
 
+        ret = event_notifier_init(&s->iou_irq, false);
+        if (ret) {
+            error_setg(errp, "irq event_notifier_init failed");
+            return;
+        }
+
         bip.guest_ram = memory_region_get_ram_ptr(ram_memory);
         bip.guest_ram_size = memory_region_size(ram_memory);
+        bip.irq = &s->iou_irq;
 
         ret = blk_io_uring_pt_init(conf->conf.blk, &bip);
         if (ret) {
