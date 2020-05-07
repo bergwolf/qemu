@@ -78,6 +78,7 @@ typedef struct VirtIOBlock {
 
     /* Events */
     EventNotifier iou_irq;
+    EventNotifier iou_kick;
     int iou_virq; /* TODO: move in VirtIOBlkPCI */
 #endif
 } VirtIOBlock;

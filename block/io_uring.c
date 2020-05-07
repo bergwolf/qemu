@@ -339,6 +339,13 @@ static int __sys_io_uring_enter(int fd, unsigned to_submit, unsigned min_complet
 			flags, sig, _NSIG / 8);
 }
 
+static int __sys_io_uring_register(int fd, unsigned opcode, const void *arg,
+			    unsigned nr_args)
+{
+	return syscall(427, fd, opcode, arg, nr_args);
+}
+
+
 /**
  * luring_do_submit:
  * @fd: file descriptor for I/O
@@ -535,6 +542,21 @@ static int luring_pt_register_irqfd(LuringState *s, int fd)
     return io_uring_register_eventfd(&s->ring, fd);
 }
 
+#define IORING_REGISTER_KICKFD		11
+#define IORING_UNREGISTER_KICKFD	12
+
+static int luring_pt_register_kickfd(LuringState *s, int fd)
+{
+    int ret;
+
+    ret = __sys_io_uring_register(s->ring.ring_fd, IORING_REGISTER_KICKFD,
+                                  &fd, 1);
+    if (ret < 0)
+        return -errno;
+
+    return 0;
+}
+
 int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
                    BlockDriverIoUringPTParams *bip, bool blkdev)
 {
@@ -563,6 +585,10 @@ int luring_pt_init(BlockDriverState *bs, LuringState *s, int fd,
         return ret;
 
     ret = luring_pt_register_irqfd(s, event_notifier_get_fd(bip->irq));
+    if (ret)
+        return ret;
+
+    ret = luring_pt_register_kickfd(s, event_notifier_get_fd(bip->kick));
     if (ret)
         return ret;
 

@@ -1126,8 +1126,8 @@ static uint64_t virtio_blk_io_uring_kick_read(void *opaque, hwaddr addr,
     VirtIODevice *vdev = opaque;
     VirtIOBlock *s = VIRTIO_BLK(vdev);
 
-    //printf("read addr: %lu size: %u ret: %d\n", addr, size,
-    //       s->io_uring_enter_ret);
+    printf("read addr: %lu size: %u ret: %d\n", addr, size,
+           s->io_uring_enter_ret);
 
     return s->io_uring_enter_ret;
 }
@@ -1142,8 +1142,8 @@ static void virtio_blk_io_uring_kick_write(void *opaque, hwaddr addr,
     kick.enter = s->io_uring->enter;
 
     s->io_uring_enter_ret = blk_io_uring_pt_kick(s->blk, &kick);
-    //printf("write addr: %lu val: %lu size: %u ret: %d\n", addr, val, size,
-    //       s->io_uring_enter_ret);
+    printf("write addr: %lu val: %lu size: %u ret: %d\n", addr, val, size,
+           s->io_uring_enter_ret);
 }
 
 static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
@@ -1222,7 +1222,7 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
             .read = virtio_blk_io_uring_kick_read,
             .write = virtio_blk_io_uring_kick_write,
             .valid = {
-                .min_access_size = 1,
+                .min_access_size = 4,
                 .max_access_size = 4,
             },
             .endianness = DEVICE_LITTLE_ENDIAN,
@@ -1252,9 +1252,16 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
             return;
         }
 
+        ret = event_notifier_init(&s->iou_kick, false);
+        if (ret) {
+            error_setg(errp, "kick event_notifier_init failed");
+            return;
+        }
+
         bip.guest_ram = memory_region_get_ram_ptr(ram_memory);
         bip.guest_ram_size = memory_region_size(ram_memory);
         bip.irq = &s->iou_irq;
+        bip.kick = &s->iou_kick;
 
         ret = blk_io_uring_pt_init(conf->conf.blk, &bip);
         if (ret) {
@@ -1302,6 +1309,9 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
                               &virtio_blk_io_uring_kick_ops, vdev,
                               "virtio-blk-io-uring-kick",
                               IO_URING_KICK_SIZE);
+
+        memory_region_add_eventfd(&s->iou_mr_kick, 0, 4, false, 1,
+                                  &s->iou_kick);
 
         s->io_uring->sqes_offset = ROUND_UP(io_uring_size,
                                             qemu_real_host_page_size);
