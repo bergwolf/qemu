@@ -217,6 +217,11 @@ static int ioq_submit(LuringState *s)
     int ret = 0;
     LuringAIOCB *luringcb, *luringcb_next;
 
+    if (!s->aio_context) {
+        printf("ioq_submit: skipping request since we are in PT mode\n");
+        return -1;
+    }
+
     while (s->io_q.in_queue > 0) {
         /*
          * Try to fetch sqes from the ring for requests waiting in
@@ -363,6 +368,13 @@ static int luring_do_submit(int fd, LuringAIOCB *luringcb, LuringState *s,
     int ret;
     struct io_uring_sqe *sqes = &luringcb->sqeq;
     bool fixed_file = (s->ring.flags & IORING_SETUP_SQPOLL);
+
+    /* TODO: why this happen? */
+    if (!s->aio_context) {
+        printf("luring_do_submit: skipping request (offset: 0x%lx type: %d) "
+               "since we are in PT mode\n", offset, type);
+        return -1;
+    }
 
     if (fixed_file) {
         fd = 0;
