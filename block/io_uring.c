@@ -475,8 +475,9 @@ static int luring_queue_init(LuringState *s, bool sqpoll)
     memset(&s->params, 0, sizeof(s->params));
 
     if (sqpoll) {
-        s->params.flags = IORING_SETUP_SQPOLL /*| IORING_SETUP_IOPOLL*/;
-        //s->params.sq_thread_cpu = 2;
+        s->params.flags = IORING_SETUP_SQPOLL | IORING_SETUP_IOPOLL |
+                          IORING_SETUP_SQ_AFF;
+        s->params.sq_thread_cpu = 2;
         //s->params.sq_thread_idle = 10000;
     }
 
