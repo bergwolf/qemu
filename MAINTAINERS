@@ -1630,7 +1630,8 @@ F: pc-bios/bios-microvm.bin
 Machine core
 M: Eduardo Habkost <eduardo@habkost.net>
 M: Marcel Apfelbaum <marcel.apfelbaum@gmail.com>
-R: Philippe Mathieu-Daudé <philmd@redhat.com>
+R: Philippe Mathieu-Daudé <f4bug@amsat.org>
+R: Yanan Wang <wangyanan55@huawei.com>
 S: Supported
 F: cpu.c
 F: hw/core/cpu.c
@@ -1776,6 +1777,13 @@ F: docs/specs/acpi_mem_hotplug.rst
 F: docs/specs/acpi_pci_hotplug.rst
 F: docs/specs/acpi_hw_reduced_hotplug.rst
 
+ACPI/VIOT
+M: Jean-Philippe Brucker <jean-philippe@linaro.org>
+R: Ani Sinha <ani@anisinha.ca>
+S: Supported
+F: hw/acpi/viot.c
+F: hw/acpi/viot.h
+
 ACPI/HEST/GHES
 R: Dongjiu Geng <gengdongjiu1@gmail.com>
 L: qemu-arm@nongnu.org
@@ -1810,7 +1818,7 @@ F: docs/virtio-net-failover.rst
 T: git https://github.com/jasowang/qemu.git net
 
 Parallel NOR Flash devices
-M: Philippe Mathieu-Daudé <philmd@redhat.com>
+M: Philippe Mathieu-Daudé <f4bug@amsat.org>
 T: git https://gitlab.com/philmd/qemu.git pflash-next
 S: Maintained
 F: hw/block/pflash_cfi*.c
@@ -1924,6 +1932,7 @@ virtio-balloon
 M: Michael S. Tsirkin <mst@redhat.com>
 M: David Hildenbrand <david@redhat.com>
 S: Maintained
+F: docs/interop/virtio-balloon-stats.rst
 F: hw/virtio/virtio-balloon*.c
 F: include/hw/virtio/virtio-balloon.h
 F: softmmu/balloon.c
@@ -2226,7 +2235,7 @@ F: hw/isa/piix4.c
 F: include/hw/southbridge/piix.h
 
 Firmware configuration (fw_cfg)
-M: Philippe Mathieu-Daudé <philmd@redhat.com>
+M: Philippe Mathieu-Daudé <f4bug@amsat.org>
 R: Gerd Hoffmann <kraxel@redhat.com>
 S: Supported
 F: docs/specs/fw_cfg.txt
@@ -2524,7 +2533,7 @@ F: scripts/coccinelle/errp-guard.cocci
 
 GDB stub
 M: Alex Bennée <alex.bennee@linaro.org>
-R: Philippe Mathieu-Daudé <philmd@redhat.com>
+R: Philippe Mathieu-Daudé <f4bug@amsat.org>
 S: Maintained
 F: gdbstub*
 F: include/exec/gdbstub.h
@@ -2535,7 +2544,7 @@ Memory API
 M: Paolo Bonzini <pbonzini@redhat.com>
 M: Peter Xu <peterx@redhat.com>
 M: David Hildenbrand <david@redhat.com>
-R: Philippe Mathieu-Daudé <philmd@redhat.com>
+R: Philippe Mathieu-Daudé <f4bug@amsat.org>
 S: Supported
 F: include/exec/ioport.h
 F: include/exec/memop.h
@@ -2873,11 +2882,15 @@ D-Bus
 M: Marc-André Lureau <marcandre.lureau@redhat.com>
 S: Maintained
 F: backends/dbus-vmstate.c
-F: tests/dbus-vmstate*
+F: ui/dbus*
+F: audio/dbus*
 F: util/dbus.c
+F: include/ui/dbus*
 F: include/qemu/dbus.h
-F: docs/interop/dbus.rst
-F: docs/interop/dbus-vmstate.rst
+F: docs/interop/dbus*
+F: docs/sphinx/dbus*
+F: docs/sphinx/fakedbusdoc.py
+F: tests/qtest/dbus*
 
 Seccomp
 M: Eduardo Otubo <otubo@redhat.com>
@@ -2977,12 +2990,13 @@ F: docs/COLO-FT.txt
 
 COLO Proxy
 M: Zhang Chen <chen.zhang@intel.com>
-M: Li Zhijian <lizhijian@cn.fujitsu.com>
+M: Li Zhijian <lizhijian@fujitsu.com>
 S: Supported
 F: docs/colo-proxy.txt
 F: net/colo*
 F: net/filter-rewriter.c
 F: net/filter-mirror.c
+F: tests/qtest/test-filter*
 
 Record/replay
 M: Pavel Dovgalyuk <pavel.dovgaluk@ispras.ru>
@@ -3024,14 +3038,14 @@ F: include/hw/i2c/smbus_slave.h
 F: include/hw/i2c/smbus_eeprom.h
 
 Firmware schema specifications
-M: Philippe Mathieu-Daudé <philmd@redhat.com>
+M: Philippe Mathieu-Daudé <f4bug@amsat.org>
 R: Daniel P. Berrange <berrange@redhat.com>
 R: Kashyap Chamarthy <kchamart@redhat.com>
 S: Maintained
 F: docs/interop/firmware.json
 
 EDK2 Firmware
-M: Philippe Mathieu-Daudé <philmd@redhat.com>
+M: Philippe Mathieu-Daudé <f4bug@amsat.org>
 R: Gerd Hoffmann <kraxel@redhat.com>
 S: Supported
 F: hw/i386/*ovmf*
@@ -3077,8 +3091,9 @@ Usermode Emulation
 Overall usermode emulation
 M: Riku Voipio <riku.voipio@iki.fi>
 S: Maintained
-F: thunk.c
 F: accel/tcg/user-exec*.c
+F: include/user/
+F: common-user/
 
 BSD user
 M: Warner Losh <imp@bsdimp.com>
@@ -3137,6 +3152,11 @@ M: Richard Henderson <richard.henderson@linaro.org>
 S: Maintained
 F: tcg/i386/
 F: disas/i386.c
+
+LoongArch64 TCG target
+M: WANG Xuerui <git@xen0n.name>
+S: Maintained
+F: tcg/loongarch64/
 
 MIPS TCG target
 M: Philippe Mathieu-Daudé <f4bug@amsat.org>
@@ -3263,7 +3283,7 @@ F: block/null.c
 NVMe Block Driver
 M: Stefan Hajnoczi <stefanha@redhat.com>
 R: Fam Zheng <fam@euphon.net>
-R: Philippe Mathieu-Daudé <philmd@redhat.com>
+R: Philippe Mathieu-Daudé <f4bug@amsat.org>
 L: qemu-block@nongnu.org
 S: Supported
 F: block/nvme*
@@ -3506,7 +3526,7 @@ F: tests/tcg/Makefile.include
 Integration Testing with the Avocado framework
 W: https://trello.com/b/6Qi1pxVn/avocado-qemu
 R: Cleber Rosa <crosa@redhat.com>
-R: Philippe Mathieu-Daudé <philmd@redhat.com>
+R: Philippe Mathieu-Daudé <f4bug@amsat.org>
 R: Wainer dos Santos Moschetta <wainersm@redhat.com>
 R: Beraldo Leal <bleal@redhat.com>
 S: Odd Fixes
