@@ -80,11 +80,6 @@
 #define UEFI_CPER_RECORD_MIN_SIZE 128U
 #define UEFI_CPER_RECORD_LENGTH_OFFSET 20U
 #define UEFI_CPER_RECORD_ID_OFFSET 96U
-#define IS_UEFI_CPER_RECORD(ptr) \
-    (((ptr)[0] == 'C') && \
-     ((ptr)[1] == 'P') && \
-     ((ptr)[2] == 'E') && \
-     ((ptr)[3] == 'R'))
 
 /*
  * NOTE that when accessing CPER fields within a record, memcpy()
@@ -445,6 +440,7 @@ static void check_erst_backend_storage(ERSTDeviceState *s, Error **errp)
         (record_size >= 4096) /* PAGE_SIZE */
         )) {
         error_setg(errp, "ERST record_size %u is invalid", record_size);
+        return;
     }
 
     /* Validity check header */
@@ -455,6 +451,7 @@ static void check_erst_backend_storage(ERSTDeviceState *s, Error **errp)
         (le16_to_cpu(header->reserved) == 0)
         )) {
         error_setg(errp, "ERST backend storage header is invalid");
+        return;
     }
 
     /* Check storage_size against record_size */
@@ -462,6 +459,7 @@ static void check_erst_backend_storage(ERSTDeviceState *s, Error **errp)
          (record_size > s->storage_size)) {
         error_setg(errp, "ACPI ERST requires storage size be multiple of "
             "record size (%uKiB)", record_size);
+        return;
     }
 
     /* Compute offset of first and last record storage slot */
