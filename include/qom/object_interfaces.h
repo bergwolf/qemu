@@ -20,8 +20,10 @@ typedef struct UserCreatable UserCreatable;
  * UserCreatableClass:
  * @parent_class: the base class
  * @complete: callback to be called after @obj's properties are set.
- * @can_be_deleted: callback to be called before an object is removed
- * to check if @obj can be removed safely.
+ * @prepare_delete: to be called before an attempt to delete @obj
+ * to validate whether the object can be deleted and trigger any
+ * cleanup of any resources which have to be dealt with before the
+ * object is unparented and enters finalization.
  *
  * Interface is designed to work with -object/object-add/object_add
  * commands.
@@ -36,7 +38,9 @@ typedef struct UserCreatable UserCreatable;
  * For objects created without using -object/object-add/object_add,
  * @user_creatable_complete() wrapper should be called manually if
  * object's type implements USER_CREATABLE interface and needs
- * complete() callback to be called.
+ * complete() callback to be called. Similarly @user_creatable_prepare_delete()
+ * should be called manually prior to an attempt to the delete the
+ * object.
  */
 struct UserCreatableClass {
     /* <private> */
@@ -44,7 +48,7 @@ struct UserCreatableClass {
 
     /* <public> */
     void (*complete)(UserCreatable *uc, Error **errp);
-    bool (*can_be_deleted)(UserCreatable *uc);
+    bool (*prepare_delete)(UserCreatable *uc, Error **errp);
 };
 
 /**
@@ -61,31 +65,17 @@ struct UserCreatableClass {
 bool user_creatable_complete(UserCreatable *uc, Error **errp);
 
 /**
- * user_creatable_can_be_deleted:
- * @uc: the object whose can_be_deleted() method is called if implemented
- *
- * Wrapper to call can_be_deleted() method if one of types it's inherited
- * from implements USER_CREATABLE interface.
- */
-bool user_creatable_can_be_deleted(UserCreatable *uc);
-
-/**
- * user_creatable_add_type:
- * @type: the object type name
- * @id: the unique ID for the object
- * @qdict: the object properties
- * @v: the visitor
+ * user_creatable_prepare_delete:
+ * @uc: the user-creatable object whose prepare_delete() method is called
  * @errp: if an error occurs, a pointer to an area to store the error
  *
- * Create an instance of the user creatable object @type, placing
- * it in the object composition tree with name @id, initializing
- * it with properties from @qdict
+ * Wrapper to call prepare_delete() class method if defined, otherwise
+ * does nothing.
  *
- * Returns: the newly created object or NULL on error
+ * Returns: %true on success or if prepare_delete() is not defined,
+ *          %false on failure.
  */
-Object *user_creatable_add_type(const char *type, const char *id,
-                                const QDict *qdict,
-                                Visitor *v, Error **errp);
+bool user_creatable_prepare_delete(UserCreatable *uc, Error **errp);
 
 /**
  * user_creatable_add_qapi:
@@ -99,7 +89,7 @@ void user_creatable_add_qapi(ObjectOptions *options, Error **errp);
 
 /**
  * user_creatable_parse_str:
- * @optarg: the object definition string as passed on the command line
+ * @str: the object definition string as passed on the command line
  * @errp: if an error occurs, a pointer to an area to store the error
  *
  * Parses the option for the user creatable object with a keyval parser and
@@ -110,14 +100,14 @@ void user_creatable_add_qapi(ObjectOptions *options, Error **errp);
  * Returns: ObjectOptions on success, NULL when an error occurred (*errp is set
  * then) or help was printed (*errp is not set).
  */
-ObjectOptions *user_creatable_parse_str(const char *optarg, Error **errp);
+ObjectOptions *user_creatable_parse_str(const char *str, Error **errp);
 
 /**
  * user_creatable_add_from_str:
- * @optarg: the object definition string as passed on the command line
+ * @str: the object definition string as passed on the command line
  * @errp: if an error occurs, a pointer to an area to store the error
  *
- * Create an instance of the user creatable object by parsing optarg
+ * Create an instance of the user creatable object by parsing @str
  * with a keyval parser and implicit key 'qom-type', converting the
  * result to ObjectOptions and calling into qmp_object_add().
  *
@@ -126,13 +116,13 @@ ObjectOptions *user_creatable_parse_str(const char *optarg, Error **errp);
  * Returns: true when an object was successfully created, false when an error
  * occurred (*errp is set then) or help was printed (*errp is not set).
  */
-bool user_creatable_add_from_str(const char *optarg, Error **errp);
+bool user_creatable_add_from_str(const char *str, Error **errp);
 
 /**
  * user_creatable_process_cmdline:
- * @optarg: the object definition string as passed on the command line
+ * @cmdline: the object definition string as passed on the command line
  *
- * Create an instance of the user creatable object by parsing optarg
+ * Create an instance of the user creatable object by parsing @cmdline
  * with a keyval parser and implicit key 'qom-type', converting the
  * result to ObjectOptions and calling into qmp_object_add().
  *
@@ -141,7 +131,7 @@ bool user_creatable_add_from_str(const char *optarg, Error **errp);
  * This function is only meant to be called during command line parsing.
  * It exits the process on failure or after printing help.
  */
-void user_creatable_process_cmdline(const char *optarg);
+void user_creatable_process_cmdline(const char *cmdline);
 
 /**
  * user_creatable_print_help:

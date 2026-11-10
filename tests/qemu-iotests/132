@@ -47,9 +47,8 @@ class TestSingleDrive(iotests.QMPTestCase):
             pass
 
     def test_mirror_discard(self):
-        result = self.vm.qmp('drive-mirror', device='drive0', sync='full',
-                             target=target_img)
-        self.assert_qmp(result, 'return', {})
+        self.vm.cmd('drive-mirror', device='drive0', sync='full',
+                    target=target_img)
         self.vm.hmp_qemu_io('drive0', 'discard 0 64k')
         self.complete_and_wait('drive0')
         self.vm.shutdown()
@@ -58,4 +57,5 @@ class TestSingleDrive(iotests.QMPTestCase):
 
 if __name__ == '__main__':
     iotests.main(supported_fmts=['raw', 'qcow2'],
-                 supported_protocols=['file'])
+                 supported_protocols=['file'],
+                 require_hmp=True)

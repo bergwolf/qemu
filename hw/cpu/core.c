@@ -8,12 +8,12 @@
  */
 
 #include "qemu/osdep.h"
+
+#include "hw/core/boards.h"
 #include "hw/cpu/core.h"
-#include "qapi/visitor.h"
-#include "qemu/module.h"
 #include "qapi/error.h"
-#include "sysemu/cpus.h"
-#include "hw/boards.h"
+#include "qapi/qapi-builtin-type-infos.h"
+#include "qapi/visitor.h"
 
 static void core_prop_get_core_id(Object *obj, Visitor *v, const char *name,
                                   void *opaque, Error **errp)
@@ -78,14 +78,16 @@ static void cpu_core_instance_init(Object *obj)
     }
 }
 
-static void cpu_core_class_init(ObjectClass *oc, void *data)
+static void cpu_core_class_init(ObjectClass *oc, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(oc);
 
     set_bit(DEVICE_CATEGORY_CPU, dc->categories);
-    object_class_property_add(oc, "core-id", "int", core_prop_get_core_id,
+    object_class_property_add(oc, "core-id", "int", &int_type_info,
+                              core_prop_get_core_id,
                               core_prop_set_core_id, NULL, NULL);
-    object_class_property_add(oc, "nr-threads", "int", core_prop_get_nr_threads,
+    object_class_property_add(oc, "nr-threads", "int", &int_type_info,
+                              core_prop_get_nr_threads,
                               core_prop_set_nr_threads, NULL, NULL);
 }
 

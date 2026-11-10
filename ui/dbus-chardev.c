@@ -27,7 +27,9 @@
 #include "qemu/config-file.h"
 #include "qemu/option.h"
 
+#ifdef G_OS_UNIX
 #include <gio/gunixfdlist.h>
+#endif
 
 #include "dbus.h"
 
@@ -51,6 +53,15 @@ dbus_display_chardev_export(DBusDisplay *dpy, DBusChardev *chr)
     sk = g_dbus_object_skeleton_new(path);
     g_dbus_object_skeleton_add_interface(
         sk, G_DBUS_INTERFACE_SKELETON(chr->iface));
+    if (chr->iface_vc_encoding) {
+        const char *interfaces[] = {
+            "org.qemu.Display1.Chardev.VCEncoding",
+            NULL
+        };
+        g_dbus_object_skeleton_add_interface(
+            sk, G_DBUS_INTERFACE_SKELETON(chr->iface_vc_encoding));
+        g_object_set(chr->iface, "interfaces", interfaces, NULL);
+    }
     g_dbus_object_manager_server_export(dpy->server, sk);
     chr->exported = true;
 }
@@ -104,7 +115,7 @@ dbus_chardev_init(DBusDisplay *dpy)
     dpy->notifier.notify = dbus_display_on_notify;
     dbus_display_notifier_add(&dpy->notifier);
 
-    object_child_foreach(container_get(object_get_root(), "/chardevs"),
+    object_child_foreach(object_get_container("chardevs"),
                          dbus_display_chardev_foreach, dpy);
 }
 
@@ -112,13 +123,20 @@ static gboolean
 dbus_chr_register(
     DBusChardev *dc,
     GDBusMethodInvocation *invocation,
+#ifdef G_OS_UNIX
     GUnixFDList *fd_list,
+#endif
     GVariant *arg_stream,
     QemuDBusDisplay1Chardev *object)
 {
     g_autoptr(GError) err = NULL;
     int fd;
 
+#ifdef G_OS_WIN32
+    if (!dbus_win32_import_socket(invocation, arg_stream, &fd)) {
+        return DBUS_METHOD_INVOCATION_HANDLED;
+    }
+#else
     fd = g_unix_fd_list_get(fd_list, g_variant_get_handle(arg_stream), &err);
     if (err) {
         g_dbus_method_invocation_return_error(
@@ -128,13 +146,18 @@ dbus_chr_register(
             "Couldn't get peer FD: %s", err->message);
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
+#endif
 
     if (qemu_chr_add_client(CHARDEV(dc), fd) < 0) {
         g_dbus_method_invocation_return_error(invocation,
                                               DBUS_DISPLAY_ERROR,
                                               DBUS_DISPLAY_ERROR_FAILED,
                                               "Couldn't register FD!");
+#ifdef G_OS_WIN32
+        closesocket(fd);
+#else
         close(fd);
+#endif
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
 
@@ -142,7 +165,11 @@ dbus_chr_register(
                  "owner", g_dbus_method_invocation_get_sender(invocation),
                  NULL);
 
-    qemu_dbus_display1_chardev_complete_register(object, invocation, NULL);
+    qemu_dbus_display1_chardev_complete_register(object, invocation
+#ifndef G_OS_WIN32
+                                                 , NULL
+#endif
+        );
     return DBUS_METHOD_INVOCATION_HANDLED;
 }
 
@@ -158,9 +185,7 @@ dbus_chr_send_break(
     return DBUS_METHOD_INVOCATION_HANDLED;
 }
 
-static void
-dbus_chr_open(Chardev *chr, ChardevBackend *backend,
-              bool *be_opened, Error **errp)
+static bool dbus_chr_open(Chardev *chr, ChardevBackend *backend, Error **errp)
 {
     ERRP_GUARD();
 
@@ -187,13 +212,13 @@ dbus_chr_open(Chardev *chr, ChardevBackend *backend,
     opts = qemu_opts_create(qemu_find_opts("chardev"), NULL, 0, &error_abort);
     qemu_opt_set(opts, "server", "on", &error_abort);
     qemu_opt_set(opts, "wait", "off", &error_abort);
-    CHARDEV_CLASS(object_class_by_name(TYPE_CHARDEV_SOCKET))->parse(
+    CHARDEV_CLASS(object_class_by_name(TYPE_CHARDEV_SOCKET))->chr_parse(
         opts, be, errp);
     if (*errp) {
-        return;
+        return false;
     }
-    CHARDEV_CLASS(object_class_by_name(TYPE_CHARDEV_SOCKET))->open(
-        chr, be, be_opened, errp);
+    return CHARDEV_CLASS(object_class_by_name(TYPE_CHARDEV_SOCKET))->chr_open(
+        chr, be, errp);
 }
 
 static void
@@ -251,13 +276,13 @@ dbus_chr_parse(QemuOpts *opts, ChardevBackend *backend,
 }
 
 static void
-char_dbus_class_init(ObjectClass *oc, void *data)
+char_dbus_class_init(ObjectClass *oc, const void *data)
 {
     DBusChardevClass *klass = DBUS_CHARDEV_CLASS(oc);
     ChardevClass *cc = CHARDEV_CLASS(oc);
 
-    cc->parse = dbus_chr_parse;
-    cc->open = dbus_chr_open;
+    cc->chr_parse = dbus_chr_parse;
+    cc->chr_open = dbus_chr_open;
     cc->chr_set_fe_open = dbus_chr_set_fe_open;
     cc->chr_set_echo = dbus_chr_set_echo;
     klass->parent_chr_be_event = cc->chr_be_event;
@@ -274,6 +299,7 @@ char_dbus_finalize(Object *obj)
     };
 
     dbus_display_notify(&event);
+    g_clear_object(&dc->iface_vc_encoding);
     g_clear_object(&dc->iface);
 }
 

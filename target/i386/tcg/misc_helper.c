@@ -19,9 +19,10 @@
 
 #include "qemu/osdep.h"
 #include "qemu/log.h"
+#include "accel/tcg/cpu-loop.h"
 #include "cpu.h"
 #include "exec/helper-proto.h"
-#include "exec/exec-all.h"
+#include "exec/cputlb.h"
 #include "helper-tcg.h"
 
 /*
@@ -37,17 +38,17 @@ void cpu_load_eflags(CPUX86State *env, int eflags, int update_mask)
         (eflags & update_mask) | 0x2;
 }
 
-void helper_into(CPUX86State *env, int next_eip_addend)
+void HELPER(into)(CPUX86State *env, int next_eip_addend)
 {
     int eflags;
 
-    eflags = cpu_cc_compute_all(env, CC_OP);
+    eflags = cpu_cc_compute_all(env);
     if (eflags & CC_O) {
-        raise_interrupt(env, EXCP04_INTO, 1, 0, next_eip_addend);
+        raise_interrupt(env, EXCP04_INTO, next_eip_addend);
     }
 }
 
-void helper_cpuid(CPUX86State *env)
+void HELPER(cpuid)(CPUX86State *env)
 {
     uint32_t eax, ebx, ecx, edx;
 
@@ -61,7 +62,7 @@ void helper_cpuid(CPUX86State *env)
     env->regs[R_EDX] = edx;
 }
 
-void helper_rdtsc(CPUX86State *env)
+void HELPER(rdtsc)(CPUX86State *env)
 {
     uint64_t val;
 
@@ -75,13 +76,7 @@ void helper_rdtsc(CPUX86State *env)
     env->regs[R_EDX] = (uint32_t)(val >> 32);
 }
 
-void helper_rdtscp(CPUX86State *env)
-{
-    helper_rdtsc(env);
-    env->regs[R_ECX] = (uint32_t)(env->tsc_aux);
-}
-
-void QEMU_NORETURN helper_rdpmc(CPUX86State *env)
+G_NORETURN void HELPER(rdpmc)(CPUX86State *env)
 {
     if (((env->cr[4] & CR4_PCE_MASK) == 0 ) &&
         ((env->hflags & HF_CPL_MASK) != 0)) {
@@ -94,24 +89,20 @@ void QEMU_NORETURN helper_rdpmc(CPUX86State *env)
     raise_exception_err(env, EXCP06_ILLOP, 0);
 }
 
-void QEMU_NORETURN do_pause(CPUX86State *env)
+G_NORETURN void HELPER(pause)(CPUX86State *env)
 {
     CPUState *cs = env_cpu(env);
+
+    /* Do gen_eob() tasks before going back to the main loop.  */
+    do_end_instruction(env);
+    HELPER(rechecking_single_step)(env);
 
     /* Just let another CPU run.  */
     cs->exception_index = EXCP_INTERRUPT;
     cpu_loop_exit(cs);
 }
 
-void QEMU_NORETURN helper_pause(CPUX86State *env, int next_eip_addend)
-{
-    cpu_svm_check_intercept_param(env, SVM_EXIT_PAUSE, 0, GETPC());
-    env->eip += next_eip_addend;
-
-    do_pause(env);
-}
-
-uint64_t helper_rdpkru(CPUX86State *env, uint32_t ecx)
+uint64_t HELPER(rdpkru)(CPUX86State *env, uint32_t ecx)
 {
     if ((env->cr[4] & CR4_PKE_MASK) == 0) {
         raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
@@ -123,7 +114,7 @@ uint64_t helper_rdpkru(CPUX86State *env, uint32_t ecx)
     return env->pkru;
 }
 
-void helper_wrpkru(CPUX86State *env, uint32_t ecx, uint64_t val)
+void HELPER(wrpkru)(CPUX86State *env, uint32_t ecx, uint64_t val)
 {
     CPUState *cs = env_cpu(env);
 
@@ -136,4 +127,19 @@ void helper_wrpkru(CPUX86State *env, uint32_t ecx, uint64_t val)
 
     env->pkru = val;
     tlb_flush(cs);
+}
+
+target_ulong HELPER(rdpid)(CPUX86State *env)
+{
+#if !defined CONFIG_USER_ONLY
+    return env->tsc_aux;
+#elif defined CONFIG_LINUX && defined CONFIG_GETCPU
+    unsigned cpu, node;
+    getcpu(&cpu, &node);
+    return (node << 12) | (cpu & 0xfff);
+#elif defined CONFIG_SCHED_GETCPU
+    return sched_getcpu();
+#else
+    return 0;
+#endif
 }

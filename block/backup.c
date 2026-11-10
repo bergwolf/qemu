@@ -20,10 +20,10 @@
 #include "block/blockjob_int.h"
 #include "block/block_backup.h"
 #include "block/block-copy.h"
+#include "block/dirty-bitmap.h"
 #include "qapi/error.h"
-#include "qapi/qmp/qerror.h"
 #include "qemu/cutils.h"
-#include "sysemu/block-backend.h"
+#include "system/block-backend.h"
 #include "qemu/bitmap.h"
 #include "qemu/error-report.h"
 
@@ -228,15 +228,13 @@ out:
 
 static void backup_init_bcs_bitmap(BackupBlockJob *job)
 {
-    bool ret;
     uint64_t estimate;
     BdrvDirtyBitmap *bcs_bitmap = block_copy_dirty_bitmap(job->bcs);
 
     if (job->sync_mode == MIRROR_SYNC_MODE_BITMAP) {
         bdrv_clear_dirty_bitmap(bcs_bitmap, NULL);
-        ret = bdrv_dirty_bitmap_merge_internal(bcs_bitmap, job->sync_bitmap,
-                                               NULL, true);
-        assert(ret);
+        bdrv_dirty_bitmap_merge_internal(bcs_bitmap, job->sync_bitmap, NULL,
+                                         true);
     } else if (job->sync_mode == MIRROR_SYNC_MODE_TOP) {
         /*
          * We can't hog the coroutine to initialize this thoroughly.
@@ -249,6 +247,42 @@ static void backup_init_bcs_bitmap(BackupBlockJob *job)
     job_progress_set_remaining(&job->common.job, estimate);
 }
 
+/*
+ * Walk the source before copying starts: fill zero_bitmap and, for sync=top,
+ * drop the clusters that are not allocated above the backing.
+ */
+static int coroutine_fn backup_scan_source(BackupBlockJob *s)
+{
+    Job *job = &s->common.job;
+    int64_t offset, cached_end = 0, count;
+    int ret = 0;
+
+    for (offset = 0; offset < s->len; offset += count) {
+        if (job_is_cancelled(job)) {
+            return -ECANCELED;
+        }
+
+        job_pause_point(job);
+
+        if (job_is_cancelled(job)) {
+            return -ECANCELED;
+        }
+
+        /* rdlock protects the block-status queries below */
+        bdrv_graph_co_rdlock();
+        ret = block_copy_prescan(s->bcs, offset, &cached_end, &count);
+        bdrv_graph_co_rdunlock();
+
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    block_copy_set_scan_done(s->bcs);
+
+    return 0;
+}
+
 static int coroutine_fn backup_run(Job *job, Error **errp)
 {
     BackupBlockJob *s = container_of(job, BackupBlockJob, common.job);
@@ -256,48 +290,33 @@ static int coroutine_fn backup_run(Job *job, Error **errp)
 
     backup_init_bcs_bitmap(s);
 
-    if (s->sync_mode == MIRROR_SYNC_MODE_TOP) {
-        int64_t offset = 0;
-        int64_t count;
-
-        for (offset = 0; offset < s->len; ) {
-            if (job_is_cancelled(job)) {
-                return -ECANCELED;
-            }
-
-            job_pause_point(job);
-
-            if (job_is_cancelled(job)) {
-                return -ECANCELED;
-            }
-
-            ret = block_copy_reset_unallocated(s->bcs, offset, &count);
-            if (ret < 0) {
-                return ret;
-            }
-
-            offset += count;
+    switch (s->sync_mode) {
+    case MIRROR_SYNC_MODE_TOP:
+    case MIRROR_SYNC_MODE_FULL:
+    case MIRROR_SYNC_MODE_BITMAP:
+        ret = backup_scan_source(s);
+        if (ret < 0) {
+            return ret;
         }
-        block_copy_set_skip_unallocated(s->bcs, false);
-    }
+        break;
 
-    if (s->sync_mode == MIRROR_SYNC_MODE_NONE) {
+    case MIRROR_SYNC_MODE_NONE:
         /*
          * All bits are set in bcs bitmap to allow any cluster to be copied.
-         * This does not actually require them to be copied.
+         * This does not actually require them to be copied. Yield until the
+         * job is cancelled and let the before_write notify callback service
+         * CoW requests.
          */
         while (!job_is_cancelled(job)) {
-            /*
-             * Yield until the job is cancelled.  We just let our before_write
-             * notify callback service CoW requests.
-             */
             job_yield(job);
         }
-    } else {
-        return backup_loop(s);
+        return 0;
+
+    default:
+        g_assert_not_reached();
     }
 
-    return 0;
+    return backup_loop(s);
 }
 
 static void coroutine_fn backup_pause(Job *job)
@@ -311,7 +330,7 @@ static void coroutine_fn backup_pause(Job *job)
     }
 }
 
-static void coroutine_fn backup_set_speed(BlockJob *job, int64_t speed)
+static void backup_set_speed(BlockJob *job, int64_t speed)
 {
     BackupBlockJob *s = container_of(job, BackupBlockJob, common);
 
@@ -355,11 +374,12 @@ BlockJob *backup_job_create(const char *job_id, BlockDriverState *bs,
                   BlockDriverState *target, int64_t speed,
                   MirrorSyncMode sync_mode, BdrvDirtyBitmap *sync_bitmap,
                   BitmapSyncMode bitmap_mode,
-                  bool compress,
+                  bool compress, bool discard_source,
                   const char *filter_node_name,
                   BackupPerf *perf,
                   BlockdevOnError on_source_error,
                   BlockdevOnError on_target_error,
+                  OnCbwError on_cbw_error,
                   int creation_flags,
                   BlockCompletionFunc *cb, void *opaque,
                   JobTxn *txn, Error **errp)
@@ -372,6 +392,7 @@ BlockJob *backup_job_create(const char *job_id, BlockDriverState *bs,
 
     assert(bs);
     assert(target);
+    GLOBAL_STATE_CODE();
 
     /* QMP interface protects us from these cases */
     assert(sync_mode != MIRROR_SYNC_MODE_INCREMENTAL);
@@ -382,31 +403,33 @@ BlockJob *backup_job_create(const char *job_id, BlockDriverState *bs,
         return NULL;
     }
 
+    bdrv_graph_rdlock_main_loop();
     if (!bdrv_is_inserted(bs)) {
         error_setg(errp, "Device is not inserted: %s",
                    bdrv_get_device_name(bs));
-        return NULL;
+        goto error_rdlock;
     }
 
     if (!bdrv_is_inserted(target)) {
         error_setg(errp, "Device is not inserted: %s",
                    bdrv_get_device_name(target));
-        return NULL;
+        goto error_rdlock;
     }
 
     if (compress && !bdrv_supports_compressed_writes(target)) {
         error_setg(errp, "Compression is not supported for this drive %s",
                    bdrv_get_device_name(target));
-        return NULL;
+        goto error_rdlock;
     }
 
     if (bdrv_op_is_blocked(bs, BLOCK_OP_TYPE_BACKUP_SOURCE, errp)) {
-        return NULL;
+        goto error_rdlock;
     }
 
     if (bdrv_op_is_blocked(target, BLOCK_OP_TYPE_BACKUP_TARGET, errp)) {
-        return NULL;
+        goto error_rdlock;
     }
+    bdrv_graph_rdunlock_main_loop();
 
     if (perf->max_workers < 1 || perf->max_workers > INT_MAX) {
         error_setg(errp, "max-workers must be between 1 and %d", INT_MAX);
@@ -434,6 +457,7 @@ BlockJob *backup_job_create(const char *job_id, BlockDriverState *bs,
 
     len = bdrv_getlength(bs);
     if (len < 0) {
+        GRAPH_RDLOCK_GUARD_MAINLOOP();
         error_setg_errno(errp, -len, "Unable to get length for '%s'",
                          bdrv_get_device_or_node_name(bs));
         goto error;
@@ -441,6 +465,7 @@ BlockJob *backup_job_create(const char *job_id, BlockDriverState *bs,
 
     target_len = bdrv_getlength(target);
     if (target_len < 0) {
+        GRAPH_RDLOCK_GUARD_MAINLOOP();
         error_setg_errno(errp, -target_len, "Unable to get length for '%s'",
                          bdrv_get_device_or_node_name(bs));
         goto error;
@@ -451,7 +476,8 @@ BlockJob *backup_job_create(const char *job_id, BlockDriverState *bs,
         goto error;
     }
 
-    cbw = bdrv_cbw_append(bs, target, filter_node_name, &bcs, errp);
+    cbw = bdrv_cbw_append(bs, target, filter_node_name, discard_source,
+                          perf->min_cluster_size, &bcs, on_cbw_error, errp);
     if (!cbw) {
         goto error;
     }
@@ -490,8 +516,10 @@ BlockJob *backup_job_create(const char *job_id, BlockDriverState *bs,
     block_copy_set_speed(bcs, speed);
 
     /* Required permissions are taken by copy-before-write filter target */
+    bdrv_graph_wrlock_drained();
     block_job_add_bdrv(&job->common, "target", target, 0, BLK_PERM_ALL,
                        &error_abort);
+    bdrv_graph_wrunlock();
 
     return &job->common;
 
@@ -503,5 +531,9 @@ BlockJob *backup_job_create(const char *job_id, BlockDriverState *bs,
         bdrv_cbw_drop(cbw);
     }
 
+    return NULL;
+
+error_rdlock:
+    bdrv_graph_rdunlock_main_loop();
     return NULL;
 }

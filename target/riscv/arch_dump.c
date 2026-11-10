@@ -1,4 +1,5 @@
-/* Support for writing ELF notes for RISC-V architectures
+/*
+ * Support for writing ELF notes for RISC-V architectures
  *
  * Copyright (C) 2021 Huawei Technologies Co., Ltd
  *
@@ -18,7 +19,8 @@
 #include "qemu/osdep.h"
 #include "cpu.h"
 #include "elf.h"
-#include "sysemu/dump.h"
+#include "system/dump.h"
+#include "internals.h"
 
 /* struct user_regs_struct from arch/riscv/include/uapi/asm/ptrace.h */
 struct riscv64_user_regs {
@@ -64,12 +66,11 @@ static void riscv64_note_init(struct riscv64_note *note, DumpState *s,
 }
 
 int riscv_cpu_write_elf64_note(WriteCoreDumpFunction f, CPUState *cs,
-                               int cpuid, void *opaque)
+                               int cpuid, DumpState *s)
 {
     struct riscv64_note note;
     RISCVCPU *cpu = RISCV_CPU(cs);
     CPURISCVState *env = &cpu->env;
-    DumpState *s = opaque;
     int ret, i = 0;
     const char name[] = "CORE";
 
@@ -134,12 +135,11 @@ static void riscv32_note_init(struct riscv32_note *note, DumpState *s,
 }
 
 int riscv_cpu_write_elf32_note(WriteCoreDumpFunction f, CPUState *cs,
-                               int cpuid, void *opaque)
+                               int cpuid, DumpState *s)
 {
     struct riscv32_note note;
     RISCVCPU *cpu = RISCV_CPU(cs);
     CPURISCVState *env = &cpu->env;
-    DumpState *s = opaque;
     int ret, i;
     const char name[] = "CORE";
 
@@ -162,17 +162,11 @@ int riscv_cpu_write_elf32_note(WriteCoreDumpFunction f, CPUState *cs,
     return ret;
 }
 
-int cpu_get_dump_info(ArchDumpInfo *info,
-                      const GuestPhysBlockList *guest_phys_blocks)
+void riscv_get_dump_info(const CPUState *cs, ArchDumpInfo *info,
+                         const GuestPhysBlockList *guest_phys_blocks)
 {
-    RISCVCPU *cpu;
-    CPURISCVState *env;
-
-    if (first_cpu == NULL) {
-        return -1;
-    }
-    cpu = RISCV_CPU(first_cpu);
-    env = &cpu->env;
+    const RISCVCPU *cpu = RISCV_CPU(cs);
+    const CPURISCVState *env = &cpu->env;
 
     info->d_machine = EM_RISCV;
 
@@ -182,13 +176,12 @@ int cpu_get_dump_info(ArchDumpInfo *info,
     info->d_class = ELFCLASS32;
 #endif
 
-    info->d_endian = (env->mstatus & MSTATUS_UBE) != 0
-                     ? ELFDATA2MSB : ELFDATA2LSB;
-
-    return 0;
+    info->d_endian = (env->mstatus & MSTATUS_UBE) != 0 ?
+                     ELFDATA2MSB : ELFDATA2LSB;
 }
 
-ssize_t cpu_get_note_size(int class, int machine, int nr_cpus)
+size_t riscv_get_note_size(const CPUState *cs, int class, int machine,
+                           int nr_cpus)
 {
     size_t note_size;
 

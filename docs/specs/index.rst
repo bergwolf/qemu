@@ -8,6 +8,9 @@ guest hardware that is specific to QEMU.
 .. toctree::
    :maxdepth: 2
 
+   pci-ids
+   pci-serial
+   pci-testdev
    ppc-xive
    ppc-spapr-xive
    ppc-spapr-numa
@@ -18,3 +21,25 @@ guest hardware that is specific to QEMU.
    acpi_mem_hotplug
    acpi_pci_hotplug
    acpi_nvdimm
+   acpi_erst
+   sev-guest-firmware
+   fw_cfg
+   fsi
+   vmw_pvscsi-spec
+   edu
+   ivshmem-spec
+   pvpanic
+   spdm
+   standard-vga
+   virt-ctlr
+   vmcoreinfo
+   vmgenid
+   vmlaunchupdate
+   rapl-msr
+   rocker
+   riscv-iommu
+   riscv-aia
+   riscv-debug
+   aspeed-intc
+   iommu-testdev
+   s390x-secure-ipl

@@ -15,10 +15,6 @@ config ISA_DEBUG
     bool
     depends on ISA_BUS
 
-config SGA
-    bool
-    depends on ISA_BUS
-
 config ISA_TESTDEV
     bool
     default y if TEST_DEVICES
@@ -29,13 +25,19 @@ config PCI_TESTDEV
     default y if TEST_DEVICES
     depends on PCI
 
+config IOMMU_TESTDEV
+    bool
+    default y if TEST_DEVICES
+    depends on PCI
+
 config EDU
     bool
     default y if TEST_DEVICES
     depends on PCI && MSI_NONBROKEN
 
-config PCA9552
+config I2C_ECHO
     bool
+    default y if TEST_DEVICES
     depends on I2C
 
 config PL310
@@ -48,6 +50,18 @@ config A9SCU
     bool
 
 config ARM11SCU
+    bool
+
+config MAX78000_AES
+    bool
+
+config MAX78000_GCR
+    bool
+
+config MAX78000_ICC
+    bool
+
+config MAX78000_TRNG
     bool
 
 config MOS6522
@@ -67,15 +81,61 @@ config IVSHMEM_DEVICE
     default y if PCI_DEVICES
     depends on PCI && LINUX && IVSHMEM && MSI_NONBROKEN
 
+config IVSHMEM_FLAT_DEVICE
+    bool
+    default y
+    depends on LINUX && IVSHMEM
+
 config ECCMEMCTL
     bool
-    select ECC
 
-config IMX
+config IMX_CCM
     bool
-    select PTIMER
-    select SSI
-    select USB_EHCI_SYSBUS
+
+config IMX_RNG
+    bool
+
+config FSL_IMX25_CCM
+    bool
+    select IMX_CCM
+
+config FSL_IMX31_CCM
+    bool
+    select IMX_CCM
+
+config FSL_IMX6_CCM
+    bool
+    select IMX_CCM
+
+config FSL_IMX6_SRC
+    bool
+
+config FSL_IMX6UL_CCM
+    bool
+    select IMX_CCM
+
+config FSL_IMX7_CCM
+    bool
+    select IMX_CCM
+
+config FSL_IMX7_GPR
+    bool
+
+config FSL_IMX7_SNVS
+    bool
+
+config FSL_IMX7_SRC
+    bool
+
+config FSL_IMX8MP_ANALOG
+    bool
+
+config FSL_IMX8MP_CCM
+    bool
+    select IMX_CCM
+
+config STM32_RCC
+    bool
 
 config STM32F2XX_SYSCFG
     bool
@@ -86,7 +146,26 @@ config STM32F4XX_SYSCFG
 config STM32F4XX_EXTI
     bool
 
+config STM32L4X5_EXTI
+    bool
+
+config STM32L4X5_SYSCFG
+    bool
+
+config STM32L4X5_RCC
+    bool
+
 config MIPS_ITU
+    bool
+    depends on TCG
+
+config RISCV_MIPS_CMGCR
+    bool
+
+config RISCV_MIPS_CPC
+    bool
+
+config RISCV_MIPS_CPS
     bool
 
 config MPS2_FPGAIO
@@ -129,6 +208,10 @@ config PVPANIC_ISA
     depends on ISA_BUS
     select PVPANIC_COMMON
 
+config PVPANIC_MMIO
+    bool
+    select PVPANIC_COMMON
+
 config AUX
     bool
     select I2C
@@ -162,6 +245,9 @@ config SIFIVE_TEST
 config SIFIVE_E_PRCI
     bool
 
+config SIFIVE_E_AON
+    bool
+
 config SIFIVE_U_OTP
     bool
 
@@ -171,4 +257,49 @@ config SIFIVE_U_PRCI
 config VIRT_CTRL
     bool
 
+config LASI
+    bool
+    select LASI_82596
+    select LASIPS2
+    select NCR710_SCSI
+    select PARALLEL
+    select SERIAL_MM
+
+config ALLWINNER_SRAMC
+    bool
+
+config ALLWINNER_A10_CCM
+    bool
+
+config ALLWINNER_A10_DRAMC
+    bool
+
+config AXP2XX_PMU
+    bool
+    depends on I2C
+
+config DJMEMC
+    bool
+
+config IOSB
+    bool
+
+config XLNX_VERSAL_TRNG
+    bool
+
+config XLNX_ZYNQ_DDRC
+    bool
+
+config AXIADO_CLK
+    bool
+
+config K230_DECOMP_GZIP
+    bool
+
+config SOPHGO_CV1800B_CLK
+    bool
+
 source macio/Kconfig
+
+config QCOM_QDSP6SS_CLK
+    bool

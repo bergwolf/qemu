@@ -14,7 +14,9 @@
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 #include "cpu_features.h"
-#include "hw/s390x/pv.h"
+#ifndef CONFIG_USER_ONLY
+#include "target/s390x/kvm/pv.h"
+#endif
 
 #define DEF_FEAT(_FEAT, _NAME, _TYPE, _BIT, _DESC) \
     [S390_FEAT_##_FEAT] = {                        \
@@ -91,6 +93,7 @@ void s390_fill_feat_block(const S390FeatBitmap features, S390FeatType type,
     case S390_FEAT_TYPE_KDSA:
     case S390_FEAT_TYPE_SORTL:
     case S390_FEAT_TYPE_DFLTCC:
+    case S390_FEAT_TYPE_PFCR:
         set_be_bit(0, data); /* query is always available */
         break;
     default:
@@ -107,6 +110,7 @@ void s390_fill_feat_block(const S390FeatBitmap features, S390FeatType type,
         feat = find_next_bit(features, S390_FEAT_MAX, feat + 1);
     }
 
+#ifndef CONFIG_USER_ONLY
     if (!s390_is_pv()) {
         return;
     }
@@ -115,6 +119,8 @@ void s390_fill_feat_block(const S390FeatBitmap features, S390FeatType type,
      * Some facilities are not available for CPUs in protected mode:
      * - All SIE facilities because SIE is not available
      * - DIAG318
+     * - Secure IPL Facility
+     * - Secure IPL Code Loading Attributes Facility
      *
      * As VMs can move in and out of protected mode the CPU model
      * doesn't protect us from that problem because it is only
@@ -143,10 +149,19 @@ void s390_fill_feat_block(const S390FeatBitmap features, S390FeatType type,
         break;
     case S390_FEAT_TYPE_SCLP_FAC134:
         clear_be_bit(s390_feat_def(S390_FEAT_DIAG_318)->bit, data);
+        clear_be_bit(s390_feat_def(S390_FEAT_CERT_STORE)->bit, data);
+        break;
+    case S390_FEAT_TYPE_SCLP_FAC_IPL:
+        clear_be_bit(s390_feat_def(S390_FEAT_SIPL)->bit, data);
+        clear_be_bit(s390_feat_def(S390_FEAT_SCLAF)->bit, data);
+        break;
+    case S390_FEAT_TYPE_SCLP_FAC139:
+        clear_be_bit(s390_feat_def(S390_FEAT_SIE_ASTFLEIE2)->bit, data);
         break;
     default:
         return;
     }
+#endif
 }
 
 void s390_add_from_feat_block(S390FeatBitmap features, S390FeatType type,
@@ -208,6 +223,162 @@ void s390_feat_bitmap_to_ascii(const S390FeatBitmap features, void *opaque,
     };
 }
 
+const int s390_feat_deps[][2] = {
+    { S390_FEAT_IPTE_RANGE, S390_FEAT_DAT_ENH },
+    { S390_FEAT_IDTE_SEGMENT, S390_FEAT_DAT_ENH },
+    { S390_FEAT_IDTE_REGION, S390_FEAT_DAT_ENH },
+    { S390_FEAT_IDTE_REGION, S390_FEAT_IDTE_SEGMENT },
+    { S390_FEAT_LOCAL_TLB_CLEARING, S390_FEAT_DAT_ENH},
+    { S390_FEAT_LONG_DISPLACEMENT_FAST, S390_FEAT_LONG_DISPLACEMENT },
+    { S390_FEAT_DFP_FAST, S390_FEAT_DFP },
+    { S390_FEAT_TRANSACTIONAL_EXE, S390_FEAT_STFLE_49 },
+    { S390_FEAT_EDAT_2, S390_FEAT_EDAT},
+    { S390_FEAT_MSA_EXT_5, S390_FEAT_KIMD_SHA_512 },
+    { S390_FEAT_MSA_EXT_5, S390_FEAT_KLMD_SHA_512 },
+    { S390_FEAT_MSA_EXT_4, S390_FEAT_MSA_EXT_3 },
+    { S390_FEAT_SIE_CMMA, S390_FEAT_CMM },
+    { S390_FEAT_SIE_CMMA, S390_FEAT_SIE_GSLS },
+    { S390_FEAT_SIE_PFMFI, S390_FEAT_EDAT },
+    { S390_FEAT_MSA_EXT_8, S390_FEAT_MSA_EXT_3 },
+    { S390_FEAT_MSA_EXT_9, S390_FEAT_MSA_EXT_3 },
+    { S390_FEAT_MSA_EXT_9, S390_FEAT_MSA_EXT_4 },
+    { S390_FEAT_MULTIPLE_EPOCH, S390_FEAT_TOD_CLOCK_STEERING },
+    { S390_FEAT_VECTOR_PACKED_DECIMAL, S390_FEAT_VECTOR },
+    { S390_FEAT_VECTOR_PACKED_DECIMAL_ENH, S390_FEAT_VECTOR_PACKED_DECIMAL },
+    { S390_FEAT_VECTOR_PACKED_DECIMAL_ENH2, S390_FEAT_VECTOR_PACKED_DECIMAL_ENH },
+    { S390_FEAT_VECTOR_PACKED_DECIMAL_ENH3, S390_FEAT_VECTOR_PACKED_DECIMAL_ENH2 },
+    { S390_FEAT_VECTOR_ENH, S390_FEAT_VECTOR },
+    { S390_FEAT_VECTOR_ENH2, S390_FEAT_VECTOR_ENH },
+    { S390_FEAT_VECTOR_ENH3, S390_FEAT_VECTOR_ENH2 },
+    { S390_FEAT_INSTRUCTION_EXEC_PROT, S390_FEAT_SIDE_EFFECT_ACCESS_ESOP2 },
+    { S390_FEAT_SIDE_EFFECT_ACCESS_ESOP2, S390_FEAT_ESOP },
+    { S390_FEAT_CMM_NT, S390_FEAT_CMM },
+    { S390_FEAT_GUARDED_STORAGE, S390_FEAT_SIDE_EFFECT_ACCESS_ESOP2 },
+    { S390_FEAT_MULTIPLE_EPOCH, S390_FEAT_STORE_CLOCK_FAST },
+    { S390_FEAT_MULTIPLE_EPOCH, S390_FEAT_TOD_CLOCK_STEERING },
+    { S390_FEAT_SEMAPHORE_ASSIST, S390_FEAT_STFLE_49 },
+    { S390_FEAT_KIMD_SHA3_224, S390_FEAT_MSA },
+    { S390_FEAT_KIMD_SHA3_256, S390_FEAT_MSA },
+    { S390_FEAT_KIMD_SHA3_384, S390_FEAT_MSA },
+    { S390_FEAT_KIMD_SHA3_512, S390_FEAT_MSA },
+    { S390_FEAT_KIMD_SHAKE_128, S390_FEAT_MSA },
+    { S390_FEAT_KIMD_SHAKE_256, S390_FEAT_MSA },
+    { S390_FEAT_KLMD_SHA3_224, S390_FEAT_MSA },
+    { S390_FEAT_KLMD_SHA3_256, S390_FEAT_MSA },
+    { S390_FEAT_KLMD_SHA3_384, S390_FEAT_MSA },
+    { S390_FEAT_KLMD_SHA3_512, S390_FEAT_MSA },
+    { S390_FEAT_KLMD_SHAKE_128, S390_FEAT_MSA },
+    { S390_FEAT_KLMD_SHAKE_256, S390_FEAT_MSA },
+    { S390_FEAT_KMAC_HMAC_SHA_224, S390_FEAT_MSA_EXT_3 },
+    { S390_FEAT_KMAC_HMAC_SHA_256, S390_FEAT_MSA_EXT_3 },
+    { S390_FEAT_KMAC_HMAC_SHA_384, S390_FEAT_MSA_EXT_3 },
+    { S390_FEAT_KMAC_HMAC_SHA_512, S390_FEAT_MSA_EXT_3 },
+    { S390_FEAT_KMAC_HMAC_ESHA_224, S390_FEAT_MSA_EXT_3 },
+    { S390_FEAT_KMAC_HMAC_ESHA_256, S390_FEAT_MSA_EXT_3 },
+    { S390_FEAT_KMAC_HMAC_ESHA_384, S390_FEAT_MSA_EXT_3 },
+    { S390_FEAT_KMAC_HMAC_ESHA_512, S390_FEAT_MSA_EXT_3 },
+    { S390_FEAT_KM_FULL_XTS_AES_128, S390_FEAT_MSA_EXT_4 },
+    { S390_FEAT_KM_FULL_XTS_AES_256, S390_FEAT_MSA_EXT_4 },
+    { S390_FEAT_KM_FULL_XTS_EAES_128, S390_FEAT_MSA_EXT_4 },
+    { S390_FEAT_KM_FULL_XTS_EAES_256, S390_FEAT_MSA_EXT_4 },
+    { S390_FEAT_PRNO_TRNG_QRTCR, S390_FEAT_MSA_EXT_5 },
+    { S390_FEAT_PRNO_TRNG, S390_FEAT_MSA_EXT_5 },
+    { S390_FEAT_SIE_KSS, S390_FEAT_SIE_F2 },
+    { S390_FEAT_AP_QUERY_CONFIG_INFO, S390_FEAT_AP },
+    { S390_FEAT_AP_FACILITIES_TEST, S390_FEAT_AP },
+    { S390_FEAT_PTFF_QSIE, S390_FEAT_MULTIPLE_EPOCH },
+    { S390_FEAT_PTFF_QTOUE, S390_FEAT_MULTIPLE_EPOCH },
+    { S390_FEAT_PTFF_STOE, S390_FEAT_MULTIPLE_EPOCH },
+    { S390_FEAT_PTFF_STOUE, S390_FEAT_MULTIPLE_EPOCH },
+    { S390_FEAT_AP_QUEUE_INTERRUPT_CONTROL, S390_FEAT_AP },
+    { S390_FEAT_DIAG_318, S390_FEAT_EXTENDED_LENGTH_SCCB },
+    { S390_FEAT_CERT_STORE, S390_FEAT_EXTENDED_LENGTH_SCCB },
+    { S390_FEAT_SIPL, S390_FEAT_EXTENDED_LENGTH_SCCB },
+    { S390_FEAT_SCLAF, S390_FEAT_EXTENDED_LENGTH_SCCB },
+    { S390_FEAT_SCLAF, S390_FEAT_SIPL },
+    { S390_FEAT_NNPA, S390_FEAT_VECTOR },
+    { S390_FEAT_RDP, S390_FEAT_LOCAL_TLB_CLEARING },
+    { S390_FEAT_UV_FEAT_AP, S390_FEAT_AP },
+    { S390_FEAT_UV_FEAT_AP_INTR, S390_FEAT_UV_FEAT_AP },
+    { S390_FEAT_PFCR_QAF, S390_FEAT_CCF_BASE },
+    { S390_FEAT_PFCR_CSDST, S390_FEAT_CCF_BASE },
+    { S390_FEAT_PFCR_CSDSTG, S390_FEAT_CCF_BASE },
+    { S390_FEAT_PFCR_CSTST, S390_FEAT_CCF_BASE },
+    { S390_FEAT_PFCR_CSTSTG, S390_FEAT_CCF_BASE },
+    { S390_FEAT_INEFF_NC_TX, S390_FEAT_TRANSACTIONAL_EXE },
+    { S390_FEAT_PLO_CLO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_CSO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_DCSO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_CSSTO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_CSDSTO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_CSTSTO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TCS, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TCSG, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TCSX, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TCSO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QCS, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QCSG, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QCSX, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QCSO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_LO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_DLX, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_DLO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TL, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TLG, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TLX, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TLO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QL, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QLG, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QLX, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QLO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_STO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_DST, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_DSTG, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_DSTX, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_DSTO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TST, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TSTG, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TSTX, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_TSTO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QST, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QSTG, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QSTX, S390_FEAT_PLO_EXT },
+    { S390_FEAT_PLO_QSTO, S390_FEAT_PLO_EXT },
+    { S390_FEAT_SIE_ASTFLEIE2, S390_FEAT_STFLE },
+};
+
+const size_t s390_feat_deps_len = ARRAY_SIZE(s390_feat_deps);
+
+void s390_get_deprecated_features(S390FeatBitmap features)
+{
+    static const int feats[] = {
+         /* CSSKE is deprecated on newer generations */
+         S390_FEAT_CONDITIONAL_SSKE,
+         S390_FEAT_BPB,
+         /* Deprecated on z16 */
+         S390_FEAT_CONSTRAINT_TRANSACTIONAL_EXE,
+         S390_FEAT_TRANSACTIONAL_EXE
+    };
+    int i;
+    bool restart;
+
+    for (i = 0; i < ARRAY_SIZE(feats); i++) {
+        set_bit(feats[i], features);
+    }
+
+    /* Mark features that depend on any deprecated feature */
+    do {
+        restart = false;
+        for (i = 0; i < s390_feat_deps_len; i++) {
+            if (test_bit(s390_feat_deps[i][1], features) &&
+                !test_and_set_bit(s390_feat_deps[i][0], features)) {
+                /* Restart in case set features have other dependencies */
+                restart = true;
+            }
+        }
+    } while (restart);
+}
+
 #define FEAT_GROUP_INIT(_name, _group, _desc)        \
     {                                                \
         .name = _name,                               \
@@ -218,8 +389,10 @@ void s390_feat_bitmap_to_ascii(const S390FeatBitmap features, void *opaque,
 /* indexed by feature group number for easy lookup */
 static S390FeatGroupDef s390_feature_groups[] = {
     FEAT_GROUP_INIT("plo", PLO, "Perform-locked-operation facility"),
+    FEAT_GROUP_INIT("plo_ext", PLO_EXT, "PLO-extension facility"),
     FEAT_GROUP_INIT("tods", TOD_CLOCK_STEERING, "Tod-clock-steering facility"),
     FEAT_GROUP_INIT("gen13ptff", GEN13_PTFF, "PTFF enhancements introduced with z13"),
+    FEAT_GROUP_INIT("gen17ptff", GEN17_PTFF, "PTFF enhancements introduced with gen17"),
     FEAT_GROUP_INIT("msa", MSA, "Message-security-assist facility"),
     FEAT_GROUP_INIT("msa1", MSA_EXT_1, "Message-security-assist-extension 1 facility"),
     FEAT_GROUP_INIT("msa2", MSA_EXT_2, "Message-security-assist-extension 2 facility"),
@@ -231,9 +404,17 @@ static S390FeatGroupDef s390_feature_groups[] = {
     FEAT_GROUP_INIT("msa8", MSA_EXT_8, "Message-security-assist-extension 8 facility"),
     FEAT_GROUP_INIT("msa9", MSA_EXT_9, "Message-security-assist-extension 9 facility"),
     FEAT_GROUP_INIT("msa9_pckmo", MSA_EXT_9_PCKMO, "Message-security-assist-extension 9 PCKMO subfunctions"),
+    FEAT_GROUP_INIT("msa10", MSA_EXT_10, "Message-security-assist-extension 10 facility"),
+    FEAT_GROUP_INIT("msa10_pckmo", MSA_EXT_10_PCKMO, "Message-security-assist-extension 10 PCKMO subfunctions"),
+    FEAT_GROUP_INIT("msa11", MSA_EXT_11, "Message-security-assist-extension 11 facility"),
+    FEAT_GROUP_INIT("msa11_pckmo", MSA_EXT_11_PCKMO, "Message-security-assist-extension 11 PCKMO subfunctions"),
+    FEAT_GROUP_INIT("msa12", MSA_EXT_12, "Message-security-assist-extension 12 facility"),
+    FEAT_GROUP_INIT("msa13", MSA_EXT_13, "Message-security-assist-extension 13 facility"),
+    FEAT_GROUP_INIT("msa13_pckmo", MSA_EXT_13_PCKMO, "Message-security-assist-extension 13 PCKMO subfunctions"),
     FEAT_GROUP_INIT("mepochptff", MULTIPLE_EPOCH_PTFF, "PTFF enhancements introduced with Multiple-epoch facility"),
     FEAT_GROUP_INIT("esort", ENH_SORT, "Enhanced-sort facility"),
     FEAT_GROUP_INIT("deflate", DEFLATE_CONVERSION, "Deflate-conversion facility"),
+    FEAT_GROUP_INIT("ccf", CONCURRENT_FUNCTIONS, "Concurrent-functions facility"),
 };
 
 const S390FeatGroupDef *s390_feat_group_def(S390FeatGroup group)
@@ -245,7 +426,7 @@ static void init_groups(void)
 {
     int i;
 
-    /* init all bitmaps from gnerated data initially */
+    /* init all bitmaps from generated data initially */
     for (i = 0; i < ARRAY_SIZE(s390_feature_groups); i++) {
         s390_init_feat_bitmap(s390_feature_groups[i].init,
                               s390_feature_groups[i].feat);

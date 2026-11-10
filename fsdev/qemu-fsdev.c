@@ -45,7 +45,7 @@ typedef struct FsDriverListEntry {
 static QTAILQ_HEAD(, FsDriverListEntry) fsdriver_entries =
     QTAILQ_HEAD_INITIALIZER(fsdriver_entries);
 
-#define COMMON_FS_DRIVER_OPTIONS "id", "fsdriver", "readonly"
+#define COMMON_FS_DRIVER_OPTIONS "id", "fsdriver", "readonly", "max_xattr"
 
 static FsDriverTable FsDrivers[] = {
     {
@@ -86,17 +86,6 @@ static FsDriverTable FsDrivers[] = {
         .ops = &synth_ops,
         .opts = (const char * []) {
             COMMON_FS_DRIVER_OPTIONS,
-            NULL
-        },
-    },
-    {
-        .name = "proxy",
-        .ops = &proxy_ops,
-        .opts = (const char * []) {
-            COMMON_FS_DRIVER_OPTIONS,
-            "socket",
-            "sock_fd",
-            "writeout",
             NULL
         },
     },

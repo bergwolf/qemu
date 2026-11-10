@@ -19,19 +19,18 @@
 
 #include "qemu/osdep.h"
 #include "cpu.h"
-#include "exec/exec-all.h"
 #include "exec/helper-proto.h"
 #include "fpu/softfloat.h"
 
 #define FP_STATUS (env->fp_status)
 
 
-void helper_setroundmode(CPUAlphaState *env, uint32_t val)
+void HELPER(setroundmode)(CPUAlphaState *env, uint32_t val)
 {
     set_float_rounding_mode(val, &FP_STATUS);
 }
 
-void helper_setflushzero(CPUAlphaState *env, uint32_t val)
+void HELPER(setflushzero)(CPUAlphaState *env, uint32_t val)
 {
     set_flush_to_zero(val, &FP_STATUS);
 }
@@ -41,7 +40,7 @@ void helper_setflushzero(CPUAlphaState *env, uint32_t val)
 
 static uint32_t soft_to_fpcr_exc(CPUAlphaState *env)
 {
-    uint8_t exc = get_float_exception_flags(&FP_STATUS);
+    FloatExceptionFlags exc = get_float_exception_flags(&FP_STATUS);
     uint32_t ret = 0;
 
     if (unlikely(exc)) {
@@ -72,7 +71,7 @@ static void fp_exc_raise1(CPUAlphaState *env, uintptr_t retaddr,
 /* Raise exceptions for ieee fp insns without software completion.
    In that case there are no exceptions that don't trap; the mask
    doesn't apply.  */
-void helper_fp_exc_raise(CPUAlphaState *env, uint32_t ignore, uint32_t regno)
+void HELPER(fp_exc_raise)(CPUAlphaState *env, uint32_t ignore, uint32_t regno)
 {
     uint32_t exc = env->error_code;
     if (exc) {
@@ -85,7 +84,7 @@ void helper_fp_exc_raise(CPUAlphaState *env, uint32_t ignore, uint32_t regno)
 }
 
 /* Raise exceptions for ieee fp insns with software completion.  */
-void helper_fp_exc_raise_s(CPUAlphaState *env, uint32_t ignore, uint32_t regno)
+void HELPER(fp_exc_raise_s)(CPUAlphaState *env, uint32_t ignore, uint32_t regno)
 {
     uint32_t exc = env->error_code & ~ignore;
     if (exc) {
@@ -108,7 +107,7 @@ void helper_fp_exc_raise_s(CPUAlphaState *env, uint32_t ignore, uint32_t regno)
 
 /* Input handing without software completion.  Trap for all
    non-finite numbers.  */
-void helper_ieee_input(CPUAlphaState *env, uint64_t val)
+void HELPER(ieee_input)(CPUAlphaState *env, uint64_t val)
 {
     uint32_t exp = (uint32_t)(val >> 52) & 0x7ff;
     uint64_t frac = val & 0xfffffffffffffull;
@@ -126,7 +125,7 @@ void helper_ieee_input(CPUAlphaState *env, uint64_t val)
 }
 
 /* Similar, but does not trap for infinities.  Used for comparisons.  */
-void helper_ieee_input_cmp(CPUAlphaState *env, uint64_t val)
+void HELPER(ieee_input_cmp)(CPUAlphaState *env, uint64_t val)
 {
     uint32_t exp = (uint32_t)(val >> 52) & 0x7ff;
     uint64_t frac = val & 0xfffffffffffffull;
@@ -149,10 +148,10 @@ void helper_ieee_input_cmp(CPUAlphaState *env, uint64_t val)
    then the code downstream of that will need to cope with denorms sans
    flush_input_to_zero.  Most of it should work sanely, but there's
    nothing to compare with.  */
-void helper_ieee_input_s(CPUAlphaState *env, uint64_t val)
+void HELPER(ieee_input_s)(CPUAlphaState *env, uint64_t val)
 {
     if (unlikely(2 * val - 1 < 0x1fffffffffffffull)
-        && !env->fp_status.flush_inputs_to_zero) {
+        && !get_flush_inputs_to_zero(&env->fp_status)) {
         arith_excp(env, GETPC(), EXC_M_INV | EXC_M_SWC, 0);
     }
 }
@@ -203,17 +202,17 @@ static inline float32 s_to_float32(uint64_t a)
     return r.f;
 }
 
-uint32_t helper_s_to_memory(uint64_t a)
+uint32_t HELPER(s_to_memory)(uint64_t a)
 {
     return s_to_float32_int(a);
 }
 
-uint64_t helper_memory_to_s(uint32_t a)
+uint64_t HELPER(memory_to_s)(uint32_t a)
 {
     return float32_to_s_int(a);
 }
 
-uint64_t helper_adds(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(adds)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float32 fa, fb, fr;
 
@@ -225,7 +224,7 @@ uint64_t helper_adds(CPUAlphaState *env, uint64_t a, uint64_t b)
     return float32_to_s(fr);
 }
 
-uint64_t helper_subs(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(subs)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float32 fa, fb, fr;
 
@@ -237,7 +236,7 @@ uint64_t helper_subs(CPUAlphaState *env, uint64_t a, uint64_t b)
     return float32_to_s(fr);
 }
 
-uint64_t helper_muls(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(muls)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float32 fa, fb, fr;
 
@@ -249,7 +248,7 @@ uint64_t helper_muls(CPUAlphaState *env, uint64_t a, uint64_t b)
     return float32_to_s(fr);
 }
 
-uint64_t helper_divs(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(divs)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float32 fa, fb, fr;
 
@@ -261,7 +260,7 @@ uint64_t helper_divs(CPUAlphaState *env, uint64_t a, uint64_t b)
     return float32_to_s(fr);
 }
 
-uint64_t helper_sqrts(CPUAlphaState *env, uint64_t a)
+uint64_t HELPER(sqrts)(CPUAlphaState *env, uint64_t a)
 {
     float32 fa, fr;
 
@@ -290,7 +289,7 @@ static inline uint64_t float64_to_t(float64 fa)
     return r.ll;
 }
 
-uint64_t helper_addt(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(addt)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float64 fa, fb, fr;
 
@@ -302,7 +301,7 @@ uint64_t helper_addt(CPUAlphaState *env, uint64_t a, uint64_t b)
     return float64_to_t(fr);
 }
 
-uint64_t helper_subt(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(subt)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float64 fa, fb, fr;
 
@@ -314,7 +313,7 @@ uint64_t helper_subt(CPUAlphaState *env, uint64_t a, uint64_t b)
     return float64_to_t(fr);
 }
 
-uint64_t helper_mult(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(mult)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float64 fa, fb, fr;
 
@@ -326,7 +325,7 @@ uint64_t helper_mult(CPUAlphaState *env, uint64_t a, uint64_t b)
     return float64_to_t(fr);
 }
 
-uint64_t helper_divt(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(divt)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float64 fa, fb, fr;
 
@@ -338,7 +337,7 @@ uint64_t helper_divt(CPUAlphaState *env, uint64_t a, uint64_t b)
     return float64_to_t(fr);
 }
 
-uint64_t helper_sqrtt(CPUAlphaState *env, uint64_t a)
+uint64_t HELPER(sqrtt)(CPUAlphaState *env, uint64_t a)
 {
     float64 fa, fr;
 
@@ -350,7 +349,7 @@ uint64_t helper_sqrtt(CPUAlphaState *env, uint64_t a)
 }
 
 /* Comparisons */
-uint64_t helper_cmptun(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(cmptun)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float64 fa, fb;
     uint64_t ret = 0;
@@ -366,7 +365,7 @@ uint64_t helper_cmptun(CPUAlphaState *env, uint64_t a, uint64_t b)
     return ret;
 }
 
-uint64_t helper_cmpteq(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(cmpteq)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float64 fa, fb;
     uint64_t ret = 0;
@@ -382,7 +381,7 @@ uint64_t helper_cmpteq(CPUAlphaState *env, uint64_t a, uint64_t b)
     return ret;
 }
 
-uint64_t helper_cmptle(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(cmptle)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float64 fa, fb;
     uint64_t ret = 0;
@@ -398,7 +397,7 @@ uint64_t helper_cmptle(CPUAlphaState *env, uint64_t a, uint64_t b)
     return ret;
 }
 
-uint64_t helper_cmptlt(CPUAlphaState *env, uint64_t a, uint64_t b)
+uint64_t HELPER(cmptlt)(CPUAlphaState *env, uint64_t a, uint64_t b)
 {
     float64 fa, fb;
     uint64_t ret = 0;
@@ -415,7 +414,7 @@ uint64_t helper_cmptlt(CPUAlphaState *env, uint64_t a, uint64_t b)
 }
 
 /* Floating point format conversion */
-uint64_t helper_cvtts(CPUAlphaState *env, uint64_t a)
+uint64_t HELPER(cvtts)(CPUAlphaState *env, uint64_t a)
 {
     float64 fa;
     float32 fr;
@@ -427,7 +426,7 @@ uint64_t helper_cvtts(CPUAlphaState *env, uint64_t a)
     return float32_to_s(fr);
 }
 
-uint64_t helper_cvtst(CPUAlphaState *env, uint64_t a)
+uint64_t HELPER(cvtst)(CPUAlphaState *env, uint64_t a)
 {
     float32 fa;
     float64 fr;
@@ -439,7 +438,7 @@ uint64_t helper_cvtst(CPUAlphaState *env, uint64_t a)
     return float64_to_t(fr);
 }
 
-uint64_t helper_cvtqs(CPUAlphaState *env, uint64_t a)
+uint64_t HELPER(cvtqs)(CPUAlphaState *env, uint64_t a)
 {
     float32 fr = int64_to_float32(a, &FP_STATUS);
     env->error_code = soft_to_fpcr_exc(env);
@@ -453,78 +452,30 @@ uint64_t helper_cvtqs(CPUAlphaState *env, uint64_t a)
 
 static uint64_t do_cvttq(CPUAlphaState *env, uint64_t a, int roundmode)
 {
-    uint64_t frac, ret = 0;
-    uint32_t exp, sign, exc = 0;
-    int shift;
+    float64 fa;
+    int64_t ret;
+    uint32_t exc = 0;
+    FloatExceptionFlags flags;
 
-    sign = (a >> 63);
-    exp = (uint32_t)(a >> 52) & 0x7ff;
-    frac = a & 0xfffffffffffffull;
+    fa = t_to_float64(a);
+    ret = float64_to_int64_modulo(fa, roundmode, &FP_STATUS);
 
-    if (exp == 0) {
-        if (unlikely(frac != 0) && !env->fp_status.flush_inputs_to_zero) {
-            goto do_underflow;
-        }
-    } else if (exp == 0x7ff) {
-        exc = FPCR_INV;
-    } else {
-        /* Restore implicit bit.  */
-        frac |= 0x10000000000000ull;
+    flags = get_float_exception_flags(&FP_STATUS);
+    if (unlikely(flags)) {
+        set_float_exception_flags(0, &FP_STATUS);
 
-        shift = exp - 1023 - 52;
-        if (shift >= 0) {
-            /* In this case the number is so large that we must shift
-               the fraction left.  There is no rounding to do.  */
-            if (shift < 64) {
-                ret = frac << shift;
-            }
-            /* Check for overflow.  Note the special case of -0x1p63.  */
-            if (shift >= 11 && a != 0xC3E0000000000000ull) {
+        /* We need to massage the resulting exceptions. */
+        if (flags & float_flag_invalid_cvti) {
+            /* Overflow, either normal or infinity. */
+            if (float64_is_infinity(fa)) {
+                exc = FPCR_INV;
+            } else {
                 exc = FPCR_IOV | FPCR_INE;
             }
-        } else {
-            uint64_t round;
-
-            /* In this case the number is smaller than the fraction as
-               represented by the 52 bit number.  Here we must think
-               about rounding the result.  Handle this by shifting the
-               fractional part of the number into the high bits of ROUND.
-               This will let us efficiently handle round-to-nearest.  */
-            shift = -shift;
-            if (shift < 63) {
-                ret = frac >> shift;
-                round = frac << (64 - shift);
-            } else {
-                /* The exponent is so small we shift out everything.
-                   Leave a sticky bit for proper rounding below.  */
-            do_underflow:
-                round = 1;
-            }
-
-            if (round) {
-                exc = FPCR_INE;
-                switch (roundmode) {
-                case float_round_nearest_even:
-                    if (round == (1ull << 63)) {
-                        /* Fraction is exactly 0.5; round to even.  */
-                        ret += (ret & 1);
-                    } else if (round > (1ull << 63)) {
-                        ret += 1;
-                    }
-                    break;
-                case float_round_to_zero:
-                    break;
-                case float_round_up:
-                    ret += 1 - sign;
-                    break;
-                case float_round_down:
-                    ret += sign;
-                    break;
-                }
-            }
-        }
-        if (sign) {
-            ret = -ret;
+        } else if (flags & float_flag_invalid) {
+            exc = FPCR_INV;
+        } else if (flags & float_flag_inexact) {
+            exc = FPCR_INE;
         }
     }
     env->error_code = exc;
@@ -532,24 +483,24 @@ static uint64_t do_cvttq(CPUAlphaState *env, uint64_t a, int roundmode)
     return ret;
 }
 
-uint64_t helper_cvttq(CPUAlphaState *env, uint64_t a)
+uint64_t HELPER(cvttq)(CPUAlphaState *env, uint64_t a)
 {
-    return do_cvttq(env, a, FP_STATUS.float_rounding_mode);
+    return do_cvttq(env, a, get_float_rounding_mode(&FP_STATUS));
 }
 
-uint64_t helper_cvttq_c(CPUAlphaState *env, uint64_t a)
+uint64_t HELPER(cvttq_c)(CPUAlphaState *env, uint64_t a)
 {
     return do_cvttq(env, a, float_round_to_zero);
 }
 
-uint64_t helper_cvtqt(CPUAlphaState *env, uint64_t a)
+uint64_t HELPER(cvtqt)(CPUAlphaState *env, uint64_t a)
 {
     float64 fr = int64_to_float64(a, &FP_STATUS);
     env->error_code = soft_to_fpcr_exc(env);
     return float64_to_t(fr);
 }
 
-uint64_t helper_cvtql(CPUAlphaState *env, uint64_t val)
+uint64_t HELPER(cvtql)(CPUAlphaState *env, uint64_t val)
 {
     uint32_t exc = 0;
     if (val != (int32_t)val) {

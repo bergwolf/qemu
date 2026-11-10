@@ -16,10 +16,10 @@
 #define QEMU_9P_COTH_H
 
 #include "qemu/thread.h"
-#include "qemu/coroutine.h"
+#include "qemu/coroutine-core.h"
 #include "9p.h"
 
-/**
+/*
  * we want to use bottom half because we want to make sure the below
  * sequence of events.
  *
@@ -29,7 +29,7 @@
  * we cannot swap step 1 and 2, because that would imply worker thread
  * can enter coroutine while step1 is still running
  *
- * @b PERFORMANCE @b CONSIDERATIONS: As a rule of thumb, keep in mind
+ * PERFORMANCE CONSIDERATIONS: As a rule of thumb, keep in mind
  * that hopping between threads adds @b latency! So when handling a
  * 9pfs request, avoid calling v9fs_co_run_in_worker() too often, because
  * this might otherwise sum up to a significant, huge overall latency for
@@ -71,8 +71,12 @@ int coroutine_fn v9fs_co_statfs(V9fsPDU *, V9fsPath *, struct statfs *);
 int coroutine_fn v9fs_co_lstat(V9fsPDU *, V9fsPath *, struct stat *);
 int coroutine_fn v9fs_co_chmod(V9fsPDU *, V9fsPath *, mode_t);
 int coroutine_fn v9fs_co_utimensat(V9fsPDU *, V9fsPath *, struct timespec [2]);
+int coroutine_fn v9fs_co_futimens(V9fsPDU *pdu, V9fsFidState *fidp,
+                                  struct timespec times[2]);
 int coroutine_fn v9fs_co_chown(V9fsPDU *, V9fsPath *, uid_t, gid_t);
 int coroutine_fn v9fs_co_truncate(V9fsPDU *, V9fsPath *, off_t);
+int coroutine_fn v9fs_co_ftruncate(V9fsPDU *pdu, V9fsFidState *fidp,
+                                   off_t size);
 int coroutine_fn v9fs_co_llistxattr(V9fsPDU *, V9fsPath *, void *, size_t);
 int coroutine_fn v9fs_co_lgetxattr(V9fsPDU *, V9fsPath *,
                                    V9fsString *, void *, size_t);

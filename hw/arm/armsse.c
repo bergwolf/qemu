@@ -16,17 +16,17 @@
 #include "qemu/units.h"
 #include "qapi/error.h"
 #include "trace.h"
-#include "hw/sysbus.h"
+#include "hw/core/sysbus.h"
 #include "migration/vmstate.h"
-#include "hw/registerfields.h"
+#include "hw/core/registerfields.h"
 #include "hw/arm/armsse.h"
 #include "hw/arm/armsse-version.h"
 #include "hw/arm/boot.h"
-#include "hw/irq.h"
-#include "hw/qdev-clock.h"
+#include "hw/core/irq.h"
+#include "hw/core/qdev-clock.h"
 
 /*
- * The SSE-300 puts some devices in different places to the
+ * The SSE-300 and SSE-310 put some devices in different places to the
  * SSE-200 (and original IoTKit). We use an array of these structs
  * to define how each variant lays out these devices. (Parts of the
  * SoC that are the same for all variants aren't handled via these
@@ -72,12 +72,13 @@ struct ARMSSEInfo {
     bool has_cpu_pwrctrl;
     bool has_sse_counter;
     bool has_tcms;
-    Property *props;
+    uint8_t props_count;
+    const Property *props;
     const ARMSSEDeviceInfo *devinfo;
     const bool *irq_is_common;
 };
 
-static Property iotkit_properties[] = {
+static const Property iotkit_properties[] = {
     DEFINE_PROP_LINK("memory", ARMSSE, board_memory, TYPE_MEMORY_REGION,
                      MemoryRegion *),
     DEFINE_PROP_UINT32("EXP_NUMIRQ", ARMSSE, exp_numirq, 64),
@@ -85,10 +86,11 @@ static Property iotkit_properties[] = {
     DEFINE_PROP_UINT32("init-svtor", ARMSSE, init_svtor, 0x10000000),
     DEFINE_PROP_BOOL("CPU0_FPU", ARMSSE, cpu_fpu[0], true),
     DEFINE_PROP_BOOL("CPU0_DSP", ARMSSE, cpu_dsp[0], true),
-    DEFINE_PROP_END_OF_LIST()
+    DEFINE_PROP_UINT32("CPU0_MPU_NS", ARMSSE, cpu_mpu_ns[0], 8),
+    DEFINE_PROP_UINT32("CPU0_MPU_S", ARMSSE, cpu_mpu_s[0], 8),
 };
 
-static Property sse200_properties[] = {
+static const Property sse200_properties[] = {
     DEFINE_PROP_LINK("memory", ARMSSE, board_memory, TYPE_MEMORY_REGION,
                      MemoryRegion *),
     DEFINE_PROP_UINT32("EXP_NUMIRQ", ARMSSE, exp_numirq, 64),
@@ -98,10 +100,13 @@ static Property sse200_properties[] = {
     DEFINE_PROP_BOOL("CPU0_DSP", ARMSSE, cpu_dsp[0], false),
     DEFINE_PROP_BOOL("CPU1_FPU", ARMSSE, cpu_fpu[1], true),
     DEFINE_PROP_BOOL("CPU1_DSP", ARMSSE, cpu_dsp[1], true),
-    DEFINE_PROP_END_OF_LIST()
+    DEFINE_PROP_UINT32("CPU0_MPU_NS", ARMSSE, cpu_mpu_ns[0], 8),
+    DEFINE_PROP_UINT32("CPU0_MPU_S", ARMSSE, cpu_mpu_s[0], 8),
+    DEFINE_PROP_UINT32("CPU1_MPU_NS", ARMSSE, cpu_mpu_ns[1], 8),
+    DEFINE_PROP_UINT32("CPU1_MPU_S", ARMSSE, cpu_mpu_s[1], 8),
 };
 
-static Property sse300_properties[] = {
+static const Property sse300_properties[] = {
     DEFINE_PROP_LINK("memory", ARMSSE, board_memory, TYPE_MEMORY_REGION,
                      MemoryRegion *),
     DEFINE_PROP_UINT32("EXP_NUMIRQ", ARMSSE, exp_numirq, 64),
@@ -109,7 +114,20 @@ static Property sse300_properties[] = {
     DEFINE_PROP_UINT32("init-svtor", ARMSSE, init_svtor, 0x10000000),
     DEFINE_PROP_BOOL("CPU0_FPU", ARMSSE, cpu_fpu[0], true),
     DEFINE_PROP_BOOL("CPU0_DSP", ARMSSE, cpu_dsp[0], true),
-    DEFINE_PROP_END_OF_LIST()
+    DEFINE_PROP_UINT32("CPU0_MPU_NS", ARMSSE, cpu_mpu_ns[0], 8),
+    DEFINE_PROP_UINT32("CPU0_MPU_S", ARMSSE, cpu_mpu_s[0], 8),
+};
+
+static const Property sse310_properties[] = {
+    DEFINE_PROP_LINK("memory", ARMSSE, board_memory, TYPE_MEMORY_REGION,
+                     MemoryRegion *),
+    DEFINE_PROP_UINT32("EXP_NUMIRQ", ARMSSE, exp_numirq, 64),
+    DEFINE_PROP_UINT32("SRAM_ADDR_WIDTH", ARMSSE, sram_addr_width, 21),
+    DEFINE_PROP_UINT32("init-svtor", ARMSSE, init_svtor, 0x10000000),
+    DEFINE_PROP_BOOL("CPU0_FPU", ARMSSE, cpu_fpu[0], true),
+    DEFINE_PROP_BOOL("CPU0_DSP", ARMSSE, cpu_dsp[0], true),
+    DEFINE_PROP_UINT32("CPU0_MPU_NS", ARMSSE, cpu_mpu_ns[0], 8),
+    DEFINE_PROP_UINT32("CPU0_MPU_S", ARMSSE, cpu_mpu_s[0], 8),
 };
 
 static const ARMSSEDeviceInfo iotkit_devices[] = {
@@ -403,7 +421,7 @@ static const ARMSSEDeviceInfo sse300_devices[] = {
         .name = "s32kwatchdog",
         .type = TYPE_CMSDK_APB_WATCHDOG,
         .index = 0,
-        .addr = 0x4802e000,
+        .addr = 0x5802e000,
         .ppc = NO_PPC,
         .irq = NMI_0,
         .slowclk = true,
@@ -446,7 +464,7 @@ static const ARMSSEDeviceInfo sse300_devices[] = {
         .name = "CPU0CORE_PPU",
         .type = TYPE_UNIMPLEMENTED_DEVICE,
         .index = 2,
-        .addr = 0x50023000,
+        .addr = 0x58023000,
         .size = 0x1000,
         .ppc = NO_PPC,
         .irq = NO_IRQ,
@@ -455,7 +473,7 @@ static const ARMSSEDeviceInfo sse300_devices[] = {
         .name = "MGMT_PPU",
         .type = TYPE_UNIMPLEMENTED_DEVICE,
         .index = 3,
-        .addr = 0x50028000,
+        .addr = 0x58028000,
         .size = 0x1000,
         .ppc = NO_PPC,
         .irq = NO_IRQ,
@@ -464,7 +482,147 @@ static const ARMSSEDeviceInfo sse300_devices[] = {
         .name = "DEBUG_PPU",
         .type = TYPE_UNIMPLEMENTED_DEVICE,
         .index = 4,
-        .addr = 0x50029000,
+        .addr = 0x58029000,
+        .size = 0x1000,
+        .ppc = NO_PPC,
+        .irq = NO_IRQ,
+    },
+    {
+        .name = NULL,
+    }
+};
+
+static const ARMSSEDeviceInfo sse310_devices[] = {
+    {
+        .name = "timer0",
+        .type = TYPE_SSE_TIMER,
+        .index = 0,
+        .addr = 0x48000000,
+        .ppc = 0,
+        .ppc_port = 0,
+        .irq = 3,
+    },
+    {
+        .name = "timer1",
+        .type = TYPE_SSE_TIMER,
+        .index = 1,
+        .addr = 0x48001000,
+        .ppc = 0,
+        .ppc_port = 1,
+        .irq = 4,
+    },
+    {
+        .name = "timer2",
+        .type = TYPE_SSE_TIMER,
+        .index = 2,
+        .addr = 0x48002000,
+        .ppc = 0,
+        .ppc_port = 2,
+        .irq = 5,
+    },
+    {
+        .name = "timer3",
+        .type = TYPE_SSE_TIMER,
+        .index = 3,
+        .addr = 0x48003000,
+        .ppc = 0,
+        .ppc_port = 5,
+        .irq = 27,
+    },
+    {
+        .name = "s32ktimer",
+        .type = TYPE_CMSDK_APB_TIMER,
+        .index = 0,
+        .addr = 0x4802f000,
+        .ppc = 1,
+        .ppc_port = 0,
+        .irq = 2,
+        .slowclk = true,
+    },
+    {
+        .name = "s32kwatchdog",
+        .type = TYPE_CMSDK_APB_WATCHDOG,
+        .index = 0,
+        .addr = 0x5802e000,
+        .ppc = NO_PPC,
+        .irq = NMI_0,
+        .slowclk = true,
+    },
+    {
+        .name = "watchdog",
+        .type = TYPE_UNIMPLEMENTED_DEVICE,
+        .index = 0,
+        .addr = 0x48040000,
+        .size = 0x2000,
+        .ppc = NO_PPC,
+        .irq = NO_IRQ,
+    },
+    {
+        .name = "armsse-sysinfo",
+        .type = TYPE_IOTKIT_SYSINFO,
+        .index = 0,
+        .addr = 0x48020000,
+        .ppc = NO_PPC,
+        .irq = NO_IRQ,
+    },
+    {
+        .name = "armsse-sysctl",
+        .type = TYPE_IOTKIT_SYSCTL,
+        .index = 0,
+        .addr = 0x58021000,
+        .ppc = NO_PPC,
+        .irq = NO_IRQ,
+    },
+    {
+        .name = "SYS_PPU",
+        .type = TYPE_UNIMPLEMENTED_DEVICE,
+        .index = 1,
+        .addr = 0x58022000,
+        .size = 0x1000,
+        .ppc = NO_PPC,
+        .irq = NO_IRQ,
+    },
+    {
+        .name = "CPU0CORE_PPU",
+        .type = TYPE_UNIMPLEMENTED_DEVICE,
+        .index = 2,
+        .addr = 0x58023000,
+        .size = 0x1000,
+        .ppc = NO_PPC,
+        .irq = NO_IRQ,
+    },
+    {
+        .name = "MGMT_PPU",
+        .type = TYPE_UNIMPLEMENTED_DEVICE,
+        .index = 3,
+        .addr = 0x58028000,
+        .size = 0x1000,
+        .ppc = NO_PPC,
+        .irq = NO_IRQ,
+    },
+    {
+        .name = "DEBUG_PPU",
+        .type = TYPE_UNIMPLEMENTED_DEVICE,
+        .index = 4,
+        .addr = 0x58029000,
+        .size = 0x1000,
+        .ppc = NO_PPC,
+        .irq = NO_IRQ,
+    },
+    {
+        .name = "NPU0_PPU",
+        .type = TYPE_UNIMPLEMENTED_DEVICE,
+        .index = 5,
+        .addr = 0x5802a000,
+        .size = 0x1000,
+        .ppc = NO_PPC,
+        .irq = NO_IRQ,
+    },
+    {
+        .name = "NPU0_CFG",
+        .type = TYPE_UNIMPLEMENTED_DEVICE,
+        .index = 6,
+        .addr = 0x40004000,
         .size = 0x1000,
         .ppc = NO_PPC,
         .irq = NO_IRQ,
@@ -501,6 +659,20 @@ static const bool sse300_irq_is_common[32] = {
     /* 30, 31: reserved */
 };
 
+static const bool sse310_irq_is_common[32] = {
+    [0 ... 5] = true,
+    /* 6-8: reserved */
+    [9 ... 12] = true,
+    /* 13: reserved */
+    [14] = true,
+    /* 15: reserved */
+    [16] = true,
+    /* 17-26: reserved */
+    [27] = true,
+    /* 28, 29: per-CPU CTI interrupts */
+    /* 30, 31: reserved */
+};
+
 static const ARMSSEInfo armsse_variants[] = {
     {
         .name = TYPE_IOTKIT,
@@ -520,6 +692,7 @@ static const ARMSSEInfo armsse_variants[] = {
         .has_sse_counter = false,
         .has_tcms = false,
         .props = iotkit_properties,
+        .props_count = ARRAY_SIZE(iotkit_properties),
         .devinfo = iotkit_devices,
         .irq_is_common = sse200_irq_is_common,
     },
@@ -541,6 +714,7 @@ static const ARMSSEInfo armsse_variants[] = {
         .has_sse_counter = false,
         .has_tcms = false,
         .props = sse200_properties,
+        .props_count = ARRAY_SIZE(sse200_properties),
         .devinfo = sse200_devices,
         .irq_is_common = sse200_irq_is_common,
     },
@@ -562,9 +736,32 @@ static const ARMSSEInfo armsse_variants[] = {
         .has_sse_counter = true,
         .has_tcms = true,
         .props = sse300_properties,
+        .props_count = ARRAY_SIZE(sse300_properties),
         .devinfo = sse300_devices,
         .irq_is_common = sse300_irq_is_common,
     },
+    {
+        .name = TYPE_SSE310,
+        .sse_version = ARMSSE_SSE310,
+        .cpu_type = ARM_CPU_TYPE_NAME("cortex-m85"),
+        .sram_banks = 2,
+        .sram_bank_base = 0x21000000,
+        .num_cpus = 1,
+        .sys_version = 0x7e10043b,
+        .iidr = 0x74e0043b,
+        .cpuwait_rst = 0,
+        .has_mhus = false,
+        .has_cachectrl = false,
+        .has_cpusecctrl = true,
+        .has_cpuid = true,
+        .has_cpu_pwrctrl = true,
+        .has_sse_counter = true,
+        .has_tcms = true,
+        .props = sse310_properties,
+        .props_count = ARRAY_SIZE(sse310_properties),
+        .devinfo = sse310_devices,
+        .irq_is_common = sse310_irq_is_common,
+    }
 };
 
 static uint32_t armsse_sys_config_value(ARMSSE *s, const ARMSSEInfo *info)
@@ -594,6 +791,14 @@ static uint32_t armsse_sys_config_value(ARMSSE *s, const ARMSSEInfo *info)
         sys_config = deposit32(sys_config, 0, 4, info->sram_banks);
         sys_config = deposit32(sys_config, 4, 5, s->sram_addr_width);
         sys_config = deposit32(sys_config, 16, 3, 3); /* CPU0 = Cortex-M55 */
+        break;
+    case ARMSSE_SSE310:
+        sys_config = 0;
+        sys_config = deposit32(sys_config, 0, 4, info->sram_banks);
+        sys_config = deposit32(sys_config, 4, 5, s->sram_addr_width);
+        sys_config = deposit32(sys_config, 10, 1, 0); /* No CoreSight SoC */
+        sys_config = deposit32(sys_config, 11, 2, 0); /* Basic level PI */
+        sys_config = deposit32(sys_config, 16, 3, 4); /* CPU0 = Cortex-M85 */
         break;
     default:
         g_assert_not_reached();
@@ -900,6 +1105,7 @@ static qemu_irq armsse_get_common_irq_in(ARMSSE *s, int irqno)
 
 static void armsse_realize(DeviceState *dev, Error **errp)
 {
+    ERRP_GUARD();
     ARMSSE *s = ARM_SSE(dev);
     ARMSSEClass *asc = ARM_SSE_GET_CLASS(dev);
     const ARMSSEInfo *info = asc->info;
@@ -913,8 +1119,6 @@ static void armsse_realize(DeviceState *dev, Error **errp)
     DeviceState *dev_secctl;
     DeviceState *dev_splitter;
     uint32_t addr_width_max;
-
-    ERRP_GUARD();
 
     if (!s->board_memory) {
         error_setg(errp, "memory property was not set");
@@ -1015,10 +1219,8 @@ static void armsse_realize(DeviceState *dev, Error **errp)
          * later if necessary.
          */
         if (extract32(info->cpuwait_rst, i, 1)) {
-            if (!object_property_set_bool(cpuobj, "start-powered-off", true,
-                                          errp)) {
-                return;
-            }
+            object_property_set_bool(cpuobj, "start-powered-off", true,
+                                     &error_abort);
         }
         if (!s->cpu_fpu[i]) {
             if (!object_property_set_bool(cpuobj, "vfp", false, errp)) {
@@ -1029,6 +1231,14 @@ static void armsse_realize(DeviceState *dev, Error **errp)
             if (!object_property_set_bool(cpuobj, "dsp", false, errp)) {
                 return;
             }
+        }
+        if (!object_property_set_uint(cpuobj, "mpu-ns-regions",
+                                      s->cpu_mpu_ns[i], errp)) {
+            return;
+        }
+        if (!object_property_set_uint(cpuobj, "mpu-s-regions",
+                                      s->cpu_mpu_s[i], errp)) {
+            return;
         }
 
         if (i > 0) {
@@ -1191,7 +1401,7 @@ static void armsse_realize(DeviceState *dev, Error **errp)
     qdev_connect_gpio_out(DEVICE(&s->nmi_orgate), 0,
                           qdev_get_gpio_in_named(DEVICE(&s->armv7m), "NMI", 0));
 
-    /* The SSE-300 has a System Counter / System Timestamp Generator */
+    /* The SSE-300/SSE-310 has a System Counter / System Timestamp Generator */
     if (info->has_sse_counter) {
         SysBusDevice *sbd = SYS_BUS_DEVICE(&s->sse_counter);
 
@@ -1211,12 +1421,12 @@ static void armsse_realize(DeviceState *dev, Error **errp)
     }
 
     if (info->has_tcms) {
-        /* The SSE-300 has an ITCM at 0x0000_0000 and a DTCM at 0x2000_0000 */
-        memory_region_init_ram(&s->itcm, NULL, "sse300-itcm", 512 * KiB, errp);
+        /* SSE-300/SSE-310 have ITCM at 0x0000_0000 and DTCM at 0x2000_0000 */
+        memory_region_init_ram(&s->itcm, NULL, "itcm", 512 * KiB, errp);
         if (*errp) {
             return;
         }
-        memory_region_init_ram(&s->dtcm, NULL, "sse300-dtcm", 512 * KiB, errp);
+        memory_region_init_ram(&s->dtcm, NULL, "dtcm", 512 * KiB, errp);
         if (*errp) {
             return;
         }
@@ -1447,13 +1657,12 @@ static void armsse_realize(DeviceState *dev, Error **errp)
      *  0x50010000: L1 icache control registers
      *  0x50011000: CPUSECCTRL (CPU local security control registers)
      *  0x4001f000 and 0x5001f000: CPU_IDENTITY register block
-     * The SSE-300 has an extra:
+     * The SSE-300 and SSE-310 have an extra:
      *  0x40012000 and 0x50012000: CPU_PWRCTRL register block
      */
     if (info->has_cachectrl) {
         for (i = 0; i < info->num_cpus; i++) {
             char *name = g_strdup_printf("cachectrl%d", i);
-            MemoryRegion *mr;
 
             qdev_prop_set_string(DEVICE(&s->cachectrl[i]), "name", name);
             g_free(name);
@@ -1469,7 +1678,6 @@ static void armsse_realize(DeviceState *dev, Error **errp)
     if (info->has_cpusecctrl) {
         for (i = 0; i < info->num_cpus; i++) {
             char *name = g_strdup_printf("CPUSECCTRL%d", i);
-            MemoryRegion *mr;
 
             qdev_prop_set_string(DEVICE(&s->cpusecctrl[i]), "name", name);
             g_free(name);
@@ -1484,7 +1692,6 @@ static void armsse_realize(DeviceState *dev, Error **errp)
     }
     if (info->has_cpuid) {
         for (i = 0; i < info->num_cpus; i++) {
-            MemoryRegion *mr;
 
             qdev_prop_set_uint32(DEVICE(&s->cpuid[i]), "CPUID", i);
             if (!sysbus_realize(SYS_BUS_DEVICE(&s->cpuid[i]), errp)) {
@@ -1497,7 +1704,6 @@ static void armsse_realize(DeviceState *dev, Error **errp)
     }
     if (info->has_cpu_pwrctrl) {
         for (i = 0; i < info->num_cpus; i++) {
-            MemoryRegion *mr;
 
             if (!sysbus_realize(SYS_BUS_DEVICE(&s->cpu_pwrctrl[i]), errp)) {
                 return;
@@ -1590,7 +1796,7 @@ static void armsse_realize(DeviceState *dev, Error **errp)
     /* Wire up the splitters for the MPC IRQs */
     for (i = 0; i < IOTS_NUM_EXP_MPC + info->sram_banks; i++) {
         SplitIRQ *splitter = &s->mpc_irq_splitter[i];
-        DeviceState *dev_splitter = DEVICE(splitter);
+        DeviceState *devs = DEVICE(splitter);
 
         if (!object_property_set_int(OBJECT(splitter), "num-lines", 2,
                                      errp)) {
@@ -1602,22 +1808,22 @@ static void armsse_realize(DeviceState *dev, Error **errp)
 
         if (i < IOTS_NUM_EXP_MPC) {
             /* Splitter input is from GPIO input line */
-            s->mpcexp_status_in[i] = qdev_get_gpio_in(dev_splitter, 0);
-            qdev_connect_gpio_out(dev_splitter, 0,
+            s->mpcexp_status_in[i] = qdev_get_gpio_in(devs, 0);
+            qdev_connect_gpio_out(devs, 0,
                                   qdev_get_gpio_in_named(dev_secctl,
                                                          "mpcexp_status", i));
         } else {
             /* Splitter input is from our own MPC */
             qdev_connect_gpio_out_named(DEVICE(&s->mpc[i - IOTS_NUM_EXP_MPC]),
                                         "irq", 0,
-                                        qdev_get_gpio_in(dev_splitter, 0));
-            qdev_connect_gpio_out(dev_splitter, 0,
+                                        qdev_get_gpio_in(devs, 0));
+            qdev_connect_gpio_out(devs, 0,
                                   qdev_get_gpio_in_named(dev_secctl,
                                                          "mpc_status",
                                                          i - IOTS_NUM_EXP_MPC));
         }
 
-        qdev_connect_gpio_out(dev_splitter, 1,
+        qdev_connect_gpio_out(devs, 1,
                               qdev_get_gpio_in(DEVICE(&s->mpc_irq_orgate), i));
     }
     /* Create GPIO inputs which will pass the line state for our
@@ -1666,7 +1872,7 @@ static const VMStateDescription armsse_vmstate = {
     .name = "iotkit",
     .version_id = 2,
     .minimum_version_id = 2,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_CLOCK(mainclk, ARMSSE),
         VMSTATE_CLOCK(s32kclk, ARMSSE),
         VMSTATE_UINT32(nsccfg, ARMSSE),
@@ -1681,7 +1887,7 @@ static void armsse_reset(DeviceState *dev)
     s->nsccfg = 0;
 }
 
-static void armsse_class_init(ObjectClass *klass, void *data)
+static void armsse_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     IDAUInterfaceClass *iic = IDAU_INTERFACE_CLASS(klass);
@@ -1690,8 +1896,8 @@ static void armsse_class_init(ObjectClass *klass, void *data)
 
     dc->realize = armsse_realize;
     dc->vmsd = &armsse_vmstate;
-    device_class_set_props(dc, info->props);
-    dc->reset = armsse_reset;
+    device_class_set_props_n(dc, info->props, info->props_count);
+    device_class_set_legacy_reset(dc, armsse_reset);
     iic->check = armsse_idau_check;
     asc->info = info;
 }
@@ -1703,7 +1909,7 @@ static const TypeInfo armsse_info = {
     .class_size = sizeof(ARMSSEClass),
     .instance_init = armsse_init,
     .abstract = true,
-    .interfaces = (InterfaceInfo[]) {
+    .interfaces = (const InterfaceInfo[]) {
         { TYPE_IDAU_INTERFACE },
         { }
     }
@@ -1720,9 +1926,9 @@ static void armsse_register_types(void)
             .name = armsse_variants[i].name,
             .parent = TYPE_ARM_SSE,
             .class_init = armsse_class_init,
-            .class_data = (void *)&armsse_variants[i],
+            .class_data = &armsse_variants[i],
         };
-        type_register(&ti);
+        type_register_static(&ti);
     }
 }
 

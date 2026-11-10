@@ -24,7 +24,8 @@
 #include "qemu/bitops.h"
 #include "qemu/log.h"
 #include "qapi/error.h"
-#include "hw/sysbus.h"
+#include "hw/core/irq.h"
+#include "hw/core/sysbus.h"
 #include "hw/misc/mchp_pfsoc_ioscb.h"
 
 /*
@@ -33,6 +34,10 @@
  */
 #define IOSCB_WHOLE_REG_SIZE        0x10000000
 #define IOSCB_SUBMOD_REG_SIZE       0x1000
+#define IOSCB_CCC_REG_SIZE          0x2000000
+#define IOSCB_CTRL_REG_SIZE         0x800
+#define IOSCB_QSPIXIP_REG_SIZE      0x200
+
 
 /*
  * There are many sub-modules in the IOSCB module.
@@ -44,7 +49,12 @@
 #define IOSCB_LANE01_BASE           0x06500000
 #define IOSCB_LANE23_BASE           0x06510000
 #define IOSCB_CTRL_BASE             0x07020000
+#define IOSCB_QSPIXIP_BASE          0x07020100
+#define IOSCB_MAILBOX_BASE          0x07020800
 #define IOSCB_CFG_BASE              0x07080000
+#define IOSCB_CCC_BASE              0x08000000
+#define IOSCB_PLL_NW0_BASE          0x08100000
+#define IOSCB_PLL_NW1_BASE          0x08200000
 #define IOSCB_PLL_MSS_BASE          0x0E001000
 #define IOSCB_CFM_MSS_BASE          0x0E002000
 #define IOSCB_PLL_DDR_BASE          0x0E010000
@@ -84,6 +94,16 @@ static const MemoryRegionOps mchp_pfsoc_dummy_ops = {
 /* All PLL modules in IOSCB have the same register layout */
 
 #define PLL_CTRL    0x04
+#define PLL_REF_FB  0x08
+#define PLL_DIV_0_1 0x10
+#define PLL_DIV_2_3 0x14
+#define PLL_CTRL2   0x18
+#define PLL_CAL     0x1c
+#define PLL_PHADJ   0x20
+#define SSCG_REG_0  0x24
+#define SSCG_REG_1  0x28
+#define SSCG_REG_2  0x2c
+#define SSCG_REG_3  0x30
 
 static uint64_t mchp_pfsoc_pll_read(void *opaque, hwaddr offset,
                                     unsigned size)
@@ -95,6 +115,22 @@ static uint64_t mchp_pfsoc_pll_read(void *opaque, hwaddr offset,
         /* PLL is locked */
         val = BIT(25);
         break;
+    case PLL_DIV_0_1:
+    case PLL_DIV_2_3:
+        val = 0x01000100; /* return valid post divider values */
+        break;
+    case PLL_CTRL2:
+        val = 0x00001110;
+        break;
+    case PLL_REF_FB:
+        val = 0x00000100; /* RFDIV := 1 */
+        break;
+    case SSCG_REG_2:
+        val = 0x00000001; /* INTIN := 1 */
+        break;
+    case PLL_PHADJ:
+        val = 0x00000401;
+        break;
     default:
         qemu_log_mask(LOG_UNIMP, "%s: unimplemented device read "
                       "(size %d, offset 0x%" HWADDR_PRIx ")\n",
@@ -105,9 +141,18 @@ static uint64_t mchp_pfsoc_pll_read(void *opaque, hwaddr offset,
     return val;
 }
 
+static void mchp_pfsoc_pll_write(void *opaque, hwaddr offset,
+                                 uint64_t value, unsigned size)
+{
+    qemu_log_mask(LOG_UNIMP, "%s: unimplemented device write "
+                       "(size %d, value 0x%" PRIx64
+                       ", offset 0x%" HWADDR_PRIx ")\n",
+                       __func__, size, value, offset);
+}
+
 static const MemoryRegionOps mchp_pfsoc_pll_ops = {
     .read = mchp_pfsoc_pll_read,
-    .write = mchp_pfsoc_dummy_write,
+    .write = mchp_pfsoc_pll_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
@@ -141,6 +186,58 @@ static const MemoryRegionOps mchp_pfsoc_io_calib_ddr_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+#define SERVICES_CR             0x50
+#define SERVICES_SR             0x54
+#define SERVICES_STATUS_SHIFT   16
+
+static uint64_t mchp_pfsoc_ctrl_read(void *opaque, hwaddr offset,
+                                     unsigned size)
+{
+    uint32_t val = 0;
+
+    switch (offset) {
+    case SERVICES_SR:
+        /*
+         * Although some services have no error codes, most do. All services
+         * that do implement errors, begin their error codes at 1. Treat all
+         * service requests as failures & return 1.
+         * See the "PolarFire® FPGA and PolarFire SoC FPGA System Services"
+         * user guide for more information on service error codes.
+         */
+        val = 1u << SERVICES_STATUS_SHIFT;
+        break;
+    default:
+        qemu_log_mask(LOG_UNIMP, "%s: unimplemented device read "
+                      "(size %d, offset 0x%" HWADDR_PRIx ")\n",
+                      __func__, size, offset);
+    }
+
+    return val;
+}
+
+static void mchp_pfsoc_ctrl_write(void *opaque, hwaddr offset,
+                                  uint64_t value, unsigned size)
+{
+    MchpPfSoCIoscbState *s = opaque;
+
+    switch (offset) {
+    case SERVICES_CR:
+        qemu_irq_raise(s->irq);
+        break;
+    default:
+        qemu_log_mask(LOG_UNIMP, "%s: unimplemented device write "
+                      "(size %d, value 0x%" PRIx64
+                      ", offset 0x%" HWADDR_PRIx ")\n",
+                      __func__, size, value, offset);
+    }
+}
+
+static const MemoryRegionOps mchp_pfsoc_ctrl_ops = {
+    .read = mchp_pfsoc_ctrl_read,
+    .write = mchp_pfsoc_ctrl_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
 static void mchp_pfsoc_ioscb_realize(DeviceState *dev, Error **errp)
 {
     MchpPfSoCIoscbState *s = MCHP_PFSOC_IOSCB(dev);
@@ -160,13 +257,33 @@ static void mchp_pfsoc_ioscb_realize(DeviceState *dev, Error **errp)
                           "mchp.pfsoc.ioscb.lane23", IOSCB_SUBMOD_REG_SIZE);
     memory_region_add_subregion(&s->container, IOSCB_LANE23_BASE, &s->lane23);
 
-    memory_region_init_io(&s->ctrl, OBJECT(s), &mchp_pfsoc_dummy_ops, s,
-                          "mchp.pfsoc.ioscb.ctrl", IOSCB_SUBMOD_REG_SIZE);
+    memory_region_init_io(&s->ctrl, OBJECT(s), &mchp_pfsoc_ctrl_ops, s,
+                          "mchp.pfsoc.ioscb.ctrl", IOSCB_CTRL_REG_SIZE);
     memory_region_add_subregion(&s->container, IOSCB_CTRL_BASE, &s->ctrl);
+
+    memory_region_init_io(&s->qspixip, OBJECT(s), &mchp_pfsoc_dummy_ops, s,
+                          "mchp.pfsoc.ioscb.qspixip", IOSCB_QSPIXIP_REG_SIZE);
+    memory_region_add_subregion(&s->container, IOSCB_QSPIXIP_BASE, &s->qspixip);
+
+    memory_region_init_io(&s->mailbox, OBJECT(s), &mchp_pfsoc_dummy_ops, s,
+                          "mchp.pfsoc.ioscb.mailbox", IOSCB_SUBMOD_REG_SIZE);
+    memory_region_add_subregion(&s->container, IOSCB_MAILBOX_BASE, &s->mailbox);
 
     memory_region_init_io(&s->cfg, OBJECT(s), &mchp_pfsoc_dummy_ops, s,
                           "mchp.pfsoc.ioscb.cfg", IOSCB_SUBMOD_REG_SIZE);
     memory_region_add_subregion(&s->container, IOSCB_CFG_BASE, &s->cfg);
+
+    memory_region_init_io(&s->ccc, OBJECT(s), &mchp_pfsoc_dummy_ops, s,
+                          "mchp.pfsoc.ioscb.ccc", IOSCB_CCC_REG_SIZE);
+    memory_region_add_subregion(&s->container, IOSCB_CCC_BASE, &s->ccc);
+
+    memory_region_init_io(&s->pll_nw_0, OBJECT(s), &mchp_pfsoc_pll_ops, s,
+                          "mchp.pfsoc.ioscb.pll_nw_0", IOSCB_SUBMOD_REG_SIZE);
+    memory_region_add_subregion(&s->container, IOSCB_PLL_NW0_BASE, &s->pll_nw_0);
+
+    memory_region_init_io(&s->pll_nw_1, OBJECT(s), &mchp_pfsoc_pll_ops, s,
+                          "mchp.pfsoc.ioscb.pll_nw_1", IOSCB_SUBMOD_REG_SIZE);
+    memory_region_add_subregion(&s->container, IOSCB_PLL_NW1_BASE, &s->pll_nw_1);
 
     memory_region_init_io(&s->pll_mss, OBJECT(s), &mchp_pfsoc_pll_ops, s,
                           "mchp.pfsoc.ioscb.pll_mss", IOSCB_SUBMOD_REG_SIZE);
@@ -216,9 +333,11 @@ static void mchp_pfsoc_ioscb_realize(DeviceState *dev, Error **errp)
                           IOSCB_SUBMOD_REG_SIZE);
     memory_region_add_subregion(&s->container, IOSCB_IO_CALIB_SGMII_BASE,
                                 &s->io_calib_sgmii);
+
+    sysbus_init_irq(SYS_BUS_DEVICE(dev), &s->irq);
 }
 
-static void mchp_pfsoc_ioscb_class_init(ObjectClass *klass, void *data)
+static void mchp_pfsoc_ioscb_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 

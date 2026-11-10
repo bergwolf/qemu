@@ -26,10 +26,11 @@
 #define ASPEED_SMC_H
 
 #include "hw/ssi/ssi.h"
-#include "hw/sysbus.h"
+#include "hw/core/sysbus.h"
 #include "qom/object.h"
 
 struct AspeedSMCState;
+struct AspeedSMCClass;
 
 #define TYPE_ASPEED_SMC_FLASH "aspeed.smc.flash"
 OBJECT_DECLARE_SIMPLE_TYPE(AspeedSMCFlash, ASPEED_SMC_FLASH)
@@ -37,6 +38,7 @@ struct AspeedSMCFlash {
     SysBusDevice parent_obj;
 
     struct AspeedSMCState *controller;
+    struct AspeedSMCClass *asc;
     uint8_t cs;
 
     MemoryRegion mmio;
@@ -45,7 +47,7 @@ struct AspeedSMCFlash {
 #define TYPE_ASPEED_SMC "aspeed.smc"
 OBJECT_DECLARE_TYPE(AspeedSMCState, AspeedSMCClass, ASPEED_SMC)
 
-#define ASPEED_SMC_R_MAX        (0x100 / 4)
+#define ASPEED_SMC_R_MAX        (0x300 / 4)
 #define ASPEED_SMC_CS_MAX       5
 
 struct AspeedSMCState {
@@ -57,7 +59,6 @@ struct AspeedSMCState {
 
     qemu_irq irq;
 
-    uint32_t num_cs;
     qemu_irq *cs_lines;
     bool inject_failure;
 
@@ -75,11 +76,11 @@ struct AspeedSMCState {
     AddressSpace flash_as;
     MemoryRegion *dram_mr;
     AddressSpace dram_as;
+    uint64_t     dram_base;
 
     AspeedSMCFlash flashes[ASPEED_SMC_CS_MAX];
 
-    uint8_t snoop_index;
-    uint8_t snoop_dummies;
+    bool unselect;
 };
 
 typedef struct AspeedSegments {
@@ -96,14 +97,16 @@ struct AspeedSMCClass {
     uint8_t r_timings;
     uint8_t nregs_timings;
     uint8_t conf_enable_w0;
-    uint8_t max_peripherals;
+    uint8_t cs_num_max;
     const uint32_t *resets;
     const AspeedSegments *segments;
+    uint32_t segment_addr_mask;
     hwaddr flash_window_base;
     uint32_t flash_window_size;
     uint32_t features;
     hwaddr dma_flash_mask;
     hwaddr dma_dram_mask;
+    uint32_t dma_start_length;
     uint32_t nregs;
     uint32_t (*segment_to_reg)(const AspeedSMCState *s,
                                const AspeedSegments *seg);
@@ -111,6 +114,8 @@ struct AspeedSMCClass {
                            AspeedSegments *seg);
     void (*dma_ctrl)(AspeedSMCState *s, uint32_t value);
     int (*addr_width)(const AspeedSMCState *s);
+    int (*data_fifo_offset_to_cs)(const AspeedSMCState *s, uint32_t offset);
+    const MemoryRegionOps *reg_ops;
 };
 
 #endif /* ASPEED_SMC_H */

@@ -1,24 +1,12 @@
 /*
- *  FreeBSD arm register structures
+ * FreeBSD arm register structures
  *
- *  Copyright (c) 2015 Stacey Son
+ * Copyright (c) 2015 Stacey D. Son
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, see <http://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
-
-#ifndef _TARGET_ARCH_REG_H_
-#define _TARGET_ARCH_REG_H_
+#ifndef TARGET_ARCH_REG_H
+#define TARGET_ARCH_REG_H
 
 /* See sys/arm/include/reg.h */
 typedef struct target_reg {
@@ -57,4 +45,4 @@ static inline void target_copy_regs(target_reg_t *regs, const CPUARMState *env)
 
 #undef tswapreg
 
-#endif /* !_TARGET_ARCH_REG_H_ */
+#endif /* TARGET_ARCH_REG_H */

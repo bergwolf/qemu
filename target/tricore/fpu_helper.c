@@ -43,7 +43,7 @@ static inline uint8_t f_get_excp_flags(CPUTriCoreState *env)
            & (float_flag_invalid
               | float_flag_overflow
               | float_flag_underflow
-              | float_flag_output_denormal
+              | float_flag_output_denormal_flushed
               | float_flag_divbyzero
               | float_flag_inexact);
 }
@@ -99,7 +99,7 @@ static void f_update_psw_flags(CPUTriCoreState *env, uint8_t flags)
         some_excp = 1;
     }
 
-    if (flags & float_flag_underflow || flags & float_flag_output_denormal) {
+    if (flags & float_flag_underflow || flags & float_flag_output_denormal_flushed) {
         env->FPU_FU = 1 << 31;
         some_excp = 1;
     }
@@ -109,7 +109,7 @@ static void f_update_psw_flags(CPUTriCoreState *env, uint8_t flags)
         some_excp = 1;
     }
 
-    if (flags & float_flag_inexact || flags & float_flag_output_denormal) {
+    if (flags & float_flag_inexact || flags & float_flag_output_denormal_flushed) {
         env->PSW |= 1 << 26;
         some_excp = 1;
     }
@@ -118,7 +118,7 @@ static void f_update_psw_flags(CPUTriCoreState *env, uint8_t flags)
 }
 
 #define FADD_SUB(op)                                                           \
-uint32_t helper_f##op(CPUTriCoreState *env, uint32_t r1, uint32_t r2)          \
+uint32_t HELPER(f##op)(CPUTriCoreState *env, uint32_t r1, uint32_t r2)         \
 {                                                                              \
     float32 arg1 = make_float32(r1);                                           \
     float32 arg2 = make_float32(r2);                                           \
@@ -144,7 +144,7 @@ uint32_t helper_f##op(CPUTriCoreState *env, uint32_t r1, uint32_t r2)          \
 FADD_SUB(add)
 FADD_SUB(sub)
 
-uint32_t helper_fmul(CPUTriCoreState *env, uint32_t r1, uint32_t r2)
+uint32_t HELPER(fmul)(CPUTriCoreState *env, uint32_t r1, uint32_t r2)
 {
     uint32_t flags;
     float32 arg1 = make_float32(r1);
@@ -203,7 +203,7 @@ static const uint8_t target_qseed_significand_table[128] = {
     14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2
 };
 
-uint32_t helper_qseed(CPUTriCoreState *env, uint32_t r1)
+uint32_t HELPER(qseed)(CPUTriCoreState *env, uint32_t r1)
 {
     uint32_t arg1, S, E, M, E_minus_one, m_idx;
     uint32_t new_E, new_M, new_S, result;
@@ -251,7 +251,7 @@ uint32_t helper_qseed(CPUTriCoreState *env, uint32_t r1)
     return (uint32_t) result;
 }
 
-uint32_t helper_fdiv(CPUTriCoreState *env, uint32_t r1, uint32_t r2)
+uint32_t HELPER(fdiv)(CPUTriCoreState *env, uint32_t r1, uint32_t r2)
 {
     uint32_t flags;
     float32 arg1 = make_float32(r1);
@@ -277,7 +277,7 @@ uint32_t helper_fdiv(CPUTriCoreState *env, uint32_t r1, uint32_t r2)
     return (uint32_t)f_result;
 }
 
-uint32_t helper_fmadd(CPUTriCoreState *env, uint32_t r1,
+uint32_t HELPER(fmadd)(CPUTriCoreState *env, uint32_t r1,
                       uint32_t r2, uint32_t r3)
 {
     uint32_t flags;
@@ -303,7 +303,7 @@ uint32_t helper_fmadd(CPUTriCoreState *env, uint32_t r1,
     return (uint32_t)f_result;
 }
 
-uint32_t helper_fmsub(CPUTriCoreState *env, uint32_t r1,
+uint32_t HELPER(fmsub)(CPUTriCoreState *env, uint32_t r1,
                       uint32_t r2, uint32_t r3)
 {
     uint32_t flags;
@@ -331,7 +331,7 @@ uint32_t helper_fmsub(CPUTriCoreState *env, uint32_t r1,
     return (uint32_t)f_result;
 }
 
-uint32_t helper_fcmp(CPUTriCoreState *env, uint32_t r1, uint32_t r2)
+uint32_t HELPER(fcmp)(CPUTriCoreState *env, uint32_t r1, uint32_t r2)
 {
     uint32_t result, flags;
     float32 arg1 = make_float32(r1);
@@ -354,7 +354,7 @@ uint32_t helper_fcmp(CPUTriCoreState *env, uint32_t r1, uint32_t r2)
     return result;
 }
 
-uint32_t helper_ftoi(CPUTriCoreState *env, uint32_t arg)
+uint32_t HELPER(ftoi)(CPUTriCoreState *env, uint32_t arg)
 {
     float32 f_arg = make_float32(arg);
     int32_t result, flags;
@@ -373,7 +373,81 @@ uint32_t helper_ftoi(CPUTriCoreState *env, uint32_t arg)
     return (uint32_t)result;
 }
 
-uint32_t helper_itof(CPUTriCoreState *env, uint32_t arg)
+uint32_t HELPER(hptof)(CPUTriCoreState *env, uint32_t arg)
+{
+    float16 f_arg = make_float16(arg);
+    uint32_t result = 0;
+    int32_t flags = 0;
+
+    /*
+     * if we have any NAN we need to move the top 2 and lower 8 input mantissa
+     * bits to the top 2 and lower 8 output mantissa bits respectively.
+     * Softfloat on the other hand uses the top 10 mantissa bits.
+     */
+    if (float16_is_any_nan(f_arg)) {
+        if (float16_is_signaling_nan(f_arg, &env->fp_status)) {
+            flags |= float_flag_invalid;
+        }
+        result = 0;
+        result = float32_set_sign(result, f_arg >> 15);
+        result = deposit32(result, 23, 8, 0xff);
+        result = deposit32(result, 21, 2, extract32(f_arg, 8, 2));
+        result = deposit32(result, 0, 8, extract32(f_arg, 0, 8));
+    } else {
+        set_flush_inputs_to_zero(0, &env->fp_status);
+        result = float16_to_float32(f_arg, true, &env->fp_status);
+        set_flush_inputs_to_zero(1, &env->fp_status);
+        flags = f_get_excp_flags(env);
+    }
+
+    if (flags) {
+        f_update_psw_flags(env, flags);
+    } else {
+        env->FPU_FS = 0;
+    }
+
+    return result;
+}
+
+uint32_t HELPER(ftohp)(CPUTriCoreState *env, uint32_t arg)
+{
+    float32 f_arg = make_float32(arg);
+    uint32_t result = 0;
+    int32_t flags = 0;
+
+    /*
+     * if we have any NAN we need to move the top 2 and lower 8 input mantissa
+     * bits to the top 2 and lower 8 output mantissa bits respectively.
+     * Softfloat on the other hand uses the top 10 mantissa bits.
+     */
+    if (float32_is_any_nan(f_arg)) {
+        if (float32_is_signaling_nan(f_arg, &env->fp_status)) {
+            flags |= float_flag_invalid;
+        }
+        result = float16_set_sign(result, arg >> 31);
+        result = deposit32(result, 10, 5, 0x1f);
+        result = deposit32(result, 8, 2, extract32(arg, 21, 2));
+        result = deposit32(result, 0, 8, extract32(arg, 0, 8));
+        if (extract32(result, 0, 10) == 0) {
+            result |= (1 << 8);
+        }
+    } else {
+        set_flush_to_zero(0, &env->fp_status);
+        result = float32_to_float16(f_arg, true, &env->fp_status);
+        set_flush_to_zero(1, &env->fp_status);
+        flags = f_get_excp_flags(env);
+    }
+
+    if (flags) {
+        f_update_psw_flags(env, flags);
+    } else {
+        env->FPU_FS = 0;
+    }
+
+    return result;
+}
+
+uint32_t HELPER(itof)(CPUTriCoreState *env, uint32_t arg)
 {
     float32 f_result;
     uint32_t flags;
@@ -388,7 +462,7 @@ uint32_t helper_itof(CPUTriCoreState *env, uint32_t arg)
     return (uint32_t)f_result;
 }
 
-uint32_t helper_utof(CPUTriCoreState *env, uint32_t arg)
+uint32_t HELPER(utof)(CPUTriCoreState *env, uint32_t arg)
 {
     float32 f_result;
     uint32_t flags;
@@ -404,7 +478,7 @@ uint32_t helper_utof(CPUTriCoreState *env, uint32_t arg)
     return (uint32_t)f_result;
 }
 
-uint32_t helper_ftoiz(CPUTriCoreState *env, uint32_t arg)
+uint32_t HELPER(ftoiz)(CPUTriCoreState *env, uint32_t arg)
 {
     float32 f_arg = make_float32(arg);
     uint32_t result;
@@ -429,13 +503,13 @@ uint32_t helper_ftoiz(CPUTriCoreState *env, uint32_t arg)
     return result;
 }
 
-uint32_t helper_ftouz(CPUTriCoreState *env, uint32_t arg)
+uint32_t HELPER(ftou)(CPUTriCoreState *env, uint32_t arg)
 {
     float32 f_arg = make_float32(arg);
     uint32_t result;
-    int32_t flags;
+    int32_t flags = 0;
 
-    result = float32_to_uint32_round_to_zero(f_arg, &env->fp_status);
+    result = float32_to_uint32(f_arg, &env->fp_status);
 
     flags = f_get_excp_flags(env);
     if (flags & float_flag_invalid) {
@@ -443,6 +517,11 @@ uint32_t helper_ftouz(CPUTriCoreState *env, uint32_t arg)
         if (float32_is_any_nan(f_arg)) {
             result = 0;
         }
+    /*
+     * we need to check arg < 0.0 before rounding as TriCore needs to raise
+     * float_flag_invalid as well. For instance, when we have a negative
+     * exponent and sign, softfloat would only raise float_flat_inexact.
+     */
     } else if (float32_lt_quiet(f_arg, 0, &env->fp_status)) {
         flags = float_flag_invalid;
         result = 0;
@@ -456,7 +535,39 @@ uint32_t helper_ftouz(CPUTriCoreState *env, uint32_t arg)
     return result;
 }
 
-void helper_updfl(CPUTriCoreState *env, uint32_t arg)
+uint32_t HELPER(ftouz)(CPUTriCoreState *env, uint32_t arg)
+{
+    float32 f_arg = make_float32(arg);
+    uint32_t result;
+    int32_t flags;
+
+    result = float32_to_uint32_round_to_zero(f_arg, &env->fp_status);
+
+    flags = f_get_excp_flags(env);
+    if (flags & float_flag_invalid) {
+        flags &= ~float_flag_inexact;
+        if (float32_is_any_nan(f_arg)) {
+            result = 0;
+        }
+    /*
+     * we need to check arg < 0.0 before rounding as TriCore needs to raise
+     * float_flag_invalid as well. For instance, when we have a negative
+     * exponent and sign, softfloat would only raise float_flat_inexact.
+     */
+    } else if (float32_lt_quiet(f_arg, 0, &env->fp_status)) {
+        flags = float_flag_invalid;
+        result = 0;
+    }
+
+    if (flags) {
+        f_update_psw_flags(env, flags);
+    } else {
+        env->FPU_FS = 0;
+    }
+    return result;
+}
+
+void HELPER(updfl)(CPUTriCoreState *env, uint32_t arg)
 {
     env->FPU_FS =  extract32(arg, 7, 1) & extract32(arg, 15, 1);
     env->FPU_FI = (extract32(arg, 6, 1) & extract32(arg, 14, 1)) << 31;

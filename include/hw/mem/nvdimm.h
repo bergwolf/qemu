@@ -29,14 +29,6 @@
 #include "hw/acpi/aml-build.h"
 #include "qom/object.h"
 
-#define NVDIMM_DEBUG 0
-#define nvdimm_debug(fmt, ...)                                \
-    do {                                                      \
-        if (NVDIMM_DEBUG) {                                   \
-            fprintf(stderr, "nvdimm: " fmt, ## __VA_ARGS__);  \
-        }                                                     \
-    } while (0)
-
 /*
  * The minimum label data size is required by NVDIMM Namespace
  * specification, see the chapter 2 Namespaces:
@@ -84,6 +76,12 @@ struct NVDIMMDevice {
      * the guest write persistence.
      */
     bool unarmed;
+
+    /*
+     * Whether our DIMM is backed by ROM, and even label data cannot be
+     * written. If set, implies that "unarmed" is also set.
+     */
+    bool readonly;
 
     /*
      * The PPC64 - spapr requires each nvdimm device have a uuid.
@@ -159,5 +157,5 @@ void nvdimm_build_acpi(GArray *table_offsets, GArray *table_data,
                        uint32_t ram_slots, const char *oem_id,
                        const char *oem_table_id);
 void nvdimm_plug(NVDIMMState *state);
-void nvdimm_acpi_plug_cb(HotplugHandler *hotplug_dev, DeviceState *dev);
+void nvdimm_acpi_plug_cb(const HotplugHandler *hotplug_dev, DeviceState *dev);
 #endif

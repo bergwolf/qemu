@@ -64,7 +64,8 @@
  *
  * = Reporting and destroying errors =
  *
- * Report an error to the current monitor if we have one, else stderr:
+ * Report an error to the current HMP monitor if we have one, else
+ * stderr:
  *     error_report_err(err);
  * This frees the error object.
  *
@@ -207,7 +208,7 @@
  *
  * Without ERRP_GUARD(), use of the @errp parameter is restricted:
  * - It must not be dereferenced, because it may be null.
- * - It should not be passed to error_prepend() or
+ * - It should not be passed to error_prepend(), error_vprepend(), or
  *   error_append_hint(), because that doesn't work with &error_fatal.
  * ERRP_GUARD() lifts these restrictions.
  *
@@ -320,7 +321,7 @@ ErrorClass error_get_class(const Error *err);
 void error_setg_internal(Error **errp,
                          const char *src, int line, const char *func,
                          const char *fmt, ...)
-    GCC_FMT_ATTR(5, 6);
+    G_GNUC_PRINTF(5, 6);
 
 /*
  * Just like error_setg(), with @os_error info added to the message.
@@ -336,7 +337,7 @@ void error_setg_internal(Error **errp,
 void error_setg_errno_internal(Error **errp,
                                const char *fname, int line, const char *func,
                                int os_error, const char *fmt, ...)
-    GCC_FMT_ATTR(6, 7);
+    G_GNUC_PRINTF(6, 7);
 
 #ifdef _WIN32
 /*
@@ -350,7 +351,7 @@ void error_setg_errno_internal(Error **errp,
 void error_setg_win32_internal(Error **errp,
                                const char *src, int line, const char *func,
                                int win32_err, const char *fmt, ...)
-    GCC_FMT_ATTR(6, 7);
+    G_GNUC_PRINTF(6, 7);
 #endif
 
 /*
@@ -383,21 +384,21 @@ void error_propagate(Error **dst_errp, Error *local_err);
  */
 void error_propagate_prepend(Error **dst_errp, Error *local_err,
                              const char *fmt, ...)
-    GCC_FMT_ATTR(3, 4);
+    G_GNUC_PRINTF(3, 4);
 
 /*
  * Prepend some text to @errp's human-readable error message.
  * The text is made by formatting @fmt, @ap like vprintf().
  */
 void error_vprepend(Error *const *errp, const char *fmt, va_list ap)
-    GCC_FMT_ATTR(2, 0);
+    G_GNUC_PRINTF(2, 0);
 
 /*
  * Prepend some text to @errp's human-readable error message.
  * The text is made by formatting @fmt, ... like printf().
  */
 void error_prepend(Error *const *errp, const char *fmt, ...)
-    GCC_FMT_ATTR(2, 3);
+    G_GNUC_PRINTF(2, 3);
 
 /*
  * Append a printf-style human-readable explanation to an existing error.
@@ -414,7 +415,7 @@ void error_prepend(Error *const *errp, const char *fmt, ...)
  * newline.
  */
 void error_append_hint(Error *const *errp, const char *fmt, ...)
-    GCC_FMT_ATTR(2, 3);
+    G_GNUC_PRINTF(2, 3);
 
 /*
  * Convenience function to report open() failure.
@@ -438,6 +439,26 @@ Error *error_copy(const Error *err);
 void error_free(Error *err);
 
 /*
+ * Poison g_autoptr(Error) to prevent its use.
+ *
+ * Functions that report or propagate an error take ownership of the
+ * Error object.  Explicit error_free() is needed when you handle an
+ * error in some other way.  This is rare.
+ *
+ * g_autoptr(Error) would call error_free() automatically on return.
+ * To avoid a double-free, we'd have to manually clear the pointer
+ * every time we propagate or report.
+ *
+ * Thus, g_autoptr(Error) would make the rare case easier to get right
+ * (less prone to leaks), and the common case easier to get wrong
+ * (more prone to double-free).
+ */
+extern void
+__attribute__((error("Do not use g_autoptr() to declare Error * variables")))
+error_free_poisoned(Error *err);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(Error, error_free_poisoned)
+
+/*
  * Convenience function to assert that *@errp is set, then silently free it.
  */
 void error_free_or_abort(Error **errp);
@@ -458,13 +479,25 @@ void error_report_err(Error *err);
  * Convenience function to error_prepend(), warn_report() and free @err.
  */
 void warn_reportf_err(Error *err, const char *fmt, ...)
-    GCC_FMT_ATTR(2, 3);
+    G_GNUC_PRINTF(2, 3);
 
 /*
  * Convenience function to error_prepend(), error_report() and free @err.
  */
 void error_reportf_err(Error *err, const char *fmt, ...)
-    GCC_FMT_ATTR(2, 3);
+    G_GNUC_PRINTF(2, 3);
+
+/*
+ * Similar to warn_report_err(), except it prints the message just once.
+ * Return true when it prints, false otherwise.
+ */
+bool warn_report_err_once_cond(bool *printed, Error *err);
+
+#define warn_report_err_once(err)                           \
+    ({                                                      \
+        static bool print_once_;                            \
+        warn_report_err_once_cond(&print_once_, err);       \
+    })
 
 /*
  * Just like error_setg(), except you get to specify the error class.
@@ -477,7 +510,7 @@ void error_reportf_err(Error *err, const char *fmt, ...)
 void error_set_internal(Error **errp,
                         const char *src, int line, const char *func,
                         ErrorClass err_class, const char *fmt, ...)
-    GCC_FMT_ATTR(6, 7);
+    G_GNUC_PRINTF(6, 7);
 
 /*
  * Make @errp parameter easier to use regardless of argument value

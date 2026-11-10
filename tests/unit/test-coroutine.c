@@ -12,9 +12,7 @@
  */
 
 #include "qemu/osdep.h"
-#include "qemu/coroutine.h"
 #include "qemu/coroutine_int.h"
-#include "qemu/lockable.h"
 
 /*
  * Check that qemu_in_coroutine() works
@@ -197,7 +195,7 @@ static void test_no_dangling_access(void)
 }
 
 static bool locked;
-static int done;
+static int done_count;
 
 static void coroutine_fn mutex_fn(void *opaque)
 {
@@ -208,7 +206,7 @@ static void coroutine_fn mutex_fn(void *opaque)
     qemu_coroutine_yield();
     locked = false;
     qemu_co_mutex_unlock(m);
-    done++;
+    done_count++;
 }
 
 static void coroutine_fn lockable_fn(void *opaque)
@@ -220,7 +218,7 @@ static void coroutine_fn lockable_fn(void *opaque)
     qemu_coroutine_yield();
     locked = false;
     qemu_lockable_unlock(x);
-    done++;
+    done_count++;
 }
 
 static void do_test_co_mutex(CoroutineEntry *entry, void *opaque)
@@ -228,7 +226,7 @@ static void do_test_co_mutex(CoroutineEntry *entry, void *opaque)
     Coroutine *c1 = qemu_coroutine_create(entry, opaque);
     Coroutine *c2 = qemu_coroutine_create(entry, opaque);
 
-    done = 0;
+    done_count = 0;
     qemu_coroutine_enter(c1);
     g_assert(locked);
     qemu_coroutine_enter(c2);
@@ -237,11 +235,11 @@ static void do_test_co_mutex(CoroutineEntry *entry, void *opaque)
      * terminates.
      */
     qemu_coroutine_enter(c1);
-    g_assert_cmpint(done, ==, 1);
+    g_assert_cmpint(done_count, ==, 1);
     g_assert(locked);
 
     qemu_coroutine_enter(c2);
-    g_assert_cmpint(done, ==, 2);
+    g_assert_cmpint(done_count, ==, 2);
     g_assert(!locked);
 }
 
@@ -421,6 +419,57 @@ static void test_co_rwlock_downgrade(void)
     qemu_coroutine_enter(c1);
 
     g_assert(c1_done);
+}
+
+/*
+ * Check that a wake delivered before the sleeper parks is not lost.
+ *
+ * qemu_co_sleep_wake() is fire-and-forget: a caller cancelling a
+ * sleep/work loop may call it in the window after the sleeper has
+ * decided to sleep but before it has published itself inside
+ * qemu_co_sleep(). The wake must be sticky and shorten the next sleep
+ * rather than being dropped (which would block until the full sleep
+ * duration expired).
+ *
+ * No threads, timers or AioContext are needed: coroutines are
+ * cooperative, so ordering the wake before the sleep deterministically
+ * reproduces the state the racing waker would otherwise produce.
+ */
+
+typedef struct {
+    QemuCoSleep w;
+    bool completed;
+} CoSleepWakeData;
+
+static void coroutine_fn co_sleep_wake_entry(void *opaque)
+{
+    CoSleepWakeData *d = opaque;
+
+    /*
+     * The wake was already delivered before we got here. qemu_co_sleep()
+     * must consume it and return without yielding.
+     */
+    qemu_co_sleep(&d->w);
+    d->completed = true;
+}
+
+static void test_co_sleep_wake_before_sleep(void)
+{
+    CoSleepWakeData d = { .w = { 0 }, .completed = false };
+    Coroutine *co = qemu_coroutine_create(co_sleep_wake_entry, &d);
+
+    /* Waker runs first, while no sleeper is parked on w. */
+    qemu_co_sleep_wake(&d.w);
+
+    /*
+     * Entering runs qemu_co_sleep(), which consumes the pending wake and
+     * returns without yielding, so the coroutine runs straight to
+     * completion in this single enter. With the pre-fix primitive the wake
+     * is dropped, qemu_co_sleep() parks, and completed stays false.
+     */
+    qemu_coroutine_enter(co);
+
+    g_assert(d.completed);
 }
 
 /*
@@ -610,7 +659,7 @@ static void perf_baseline(void)
     g_test_message("Function call %u iterations: %f s", maxcycles, duration);
 }
 
-static __attribute__((noinline)) void perf_cost_func(void *opaque)
+static __attribute__((noinline)) void coroutine_fn perf_cost_func(void *opaque)
 {
     qemu_coroutine_yield();
 }
@@ -647,7 +696,7 @@ int main(int argc, char **argv)
      * with a sentinel value.  If there is no freelist this would legitimately
      * crash, so skip it.
      */
-    if (CONFIG_COROUTINE_POOL) {
+    if (IS_ENABLED(CONFIG_COROUTINE_POOL)) {
         g_test_add_func("/basic/no-dangling-access", test_no_dangling_access);
     }
 
@@ -662,6 +711,8 @@ int main(int argc, char **argv)
     g_test_add_func("/locking/co-mutex/lockable", test_co_mutex_lockable);
     g_test_add_func("/locking/co-rwlock/upgrade", test_co_rwlock_upgrade);
     g_test_add_func("/locking/co-rwlock/downgrade", test_co_rwlock_downgrade);
+    g_test_add_func("/locking/co-sleep/wake-before-sleep",
+                    test_co_sleep_wake_before_sleep);
     if (g_test_perf()) {
         g_test_add_func("/perf/lifecycle", perf_lifecycle);
         g_test_add_func("/perf/nesting", perf_nesting);

@@ -1,7 +1,7 @@
 /*
  * QEMU ISA VGA Emulator.
  *
- * see docs/specs/standard-vga.txt for virtual hardware specs.
+ * see docs/specs/standard-vga.rst for virtual hardware specs.
  *
  * Copyright (c) 2003 Fabrice Bellard
  *
@@ -30,8 +30,10 @@
 #include "ui/pixel_ops.h"
 #include "qemu/module.h"
 #include "qemu/timer.h"
-#include "hw/loader.h"
-#include "hw/qdev-properties.h"
+#include "hw/core/loader.h"
+#include "hw/core/qdev-properties.h"
+#include "migration/vmstate.h"
+#include "ui/console.h"
 #include "qom/object.h"
 
 #define TYPE_ISA_VGA "isa-vga"
@@ -61,8 +63,10 @@ static void vga_isa_realizefn(DeviceState *dev, Error **errp)
     MemoryRegion *vga_io_memory;
     const MemoryRegionPortio *vga_ports, *vbe_ports;
 
-    s->global_vmstate = true;
-    vga_common_init(s, OBJECT(dev));
+    if (!vga_common_init(s, OBJECT(dev), errp)) {
+        return;
+    }
+
     s->legacy_address_space = isa_address_space(isadev);
     vga_io_memory = vga_init_io(s, OBJECT(dev), &vga_ports, &vbe_ports);
     isa_register_portio_list(isadev, &d->portio_vga,
@@ -75,7 +79,7 @@ static void vga_isa_realizefn(DeviceState *dev, Error **errp)
                                         0x000a0000,
                                         vga_io_memory, 1);
     memory_region_set_coalescing(vga_io_memory);
-    s->con = graphic_console_init(dev, 0, s->hw_ops, s);
+    s->con = qemu_graphic_console_create(dev, 0, s->hw_ops, s);
 
     memory_region_add_subregion(isa_address_space(isadev),
                                 VBE_DISPI_LFB_PHYSICAL_ADDRESS,
@@ -84,18 +88,26 @@ static void vga_isa_realizefn(DeviceState *dev, Error **errp)
     rom_add_vga(VGABIOS_FILENAME);
 }
 
-static Property vga_isa_properties[] = {
-    DEFINE_PROP_UINT32("vgamem_mb", ISAVGAState, state.vram_size_mb, 8),
-    DEFINE_PROP_END_OF_LIST(),
+static const VMStateDescription vmstate_vga_isa = {
+    .name = "vga-isa",
+    .version_id = 1,
+    .fields = (const VMStateField[]) {
+        VMSTATE_STRUCT(state, ISAVGAState, 0, vmstate_vga_common, VGACommonState),
+        VMSTATE_END_OF_LIST()
+    }
 };
 
-static void vga_isa_class_initfn(ObjectClass *klass, void *data)
+static const Property vga_isa_properties[] = {
+    DEFINE_PROP_UINT32("vgamem_mb", ISAVGAState, state.vram_size_mb, 8),
+};
+
+static void vga_isa_class_initfn(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->realize = vga_isa_realizefn;
-    dc->reset = vga_isa_reset;
-    dc->vmsd = &vmstate_vga_common;
+    device_class_set_legacy_reset(dc, vga_isa_reset);
+    dc->vmsd = &vmstate_vga_isa;
     device_class_set_props(dc, vga_isa_properties);
     set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
 }

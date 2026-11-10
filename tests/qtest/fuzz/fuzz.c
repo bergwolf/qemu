@@ -15,13 +15,15 @@
 
 #include <wordexp.h>
 
+#include "qemu/cutils.h"
 #include "qemu/datadir.h"
-#include "sysemu/sysemu.h"
-#include "sysemu/qtest.h"
-#include "sysemu/runstate.h"
+#include "system/system.h"
+#include "system/qtest.h"
+#include "system/runstate.h"
 #include "qemu/main-loop.h"
 #include "qemu/rcu.h"
-#include "tests/qtest/libqos/libqtest.h"
+#include "qemu/target-info-qom.h"
+#include "tests/qtest/libqtest.h"
 #include "tests/qtest/libqos/qgraph.h"
 #include "fuzz.h"
 
@@ -40,6 +42,7 @@ static FuzzTargetList *fuzz_target_list;
 static FuzzTarget *fuzz_target;
 static QTestState *fuzz_qts;
 
+int (*qemu_main)(void);
 
 
 void flush_events(QTestState *s)
@@ -48,6 +51,12 @@ void flush_events(QTestState *s)
     while (g_main_context_pending(NULL) && i-- > 0) {
         main_loop_wait(false);
     }
+}
+
+void fuzz_reset(QTestState *s)
+{
+    qemu_system_reset(SHUTDOWN_CAUSE_GUEST_RESET);
+    main_loop_wait(true);
 }
 
 static QTestState *qtest_setup(void)
@@ -97,7 +106,7 @@ static void usage(char *path)
            "Set the environment variable FUZZ_SERIALIZE_QTEST=1 to serialize\n"
            "QTest commands into an ASCII protocol. Useful for building crash\n"
            "reproducers, but slows down execution.\n\n"
-           "Set the environment variable QTEST_LOG=1 to log all qtest commands"
+           "Set the environment variable QTEST_LOG=fuzz to log all qtest commands"
            "\n");
     exit(0);
 }
@@ -157,14 +166,15 @@ int LLVMFuzzerInitialize(int *argc, char ***argv, char ***envp)
 {
 
     char *target_name;
-    const char *bindir;
-    char *datadir;
     GString *cmd_line;
     gchar *pretty_cmd_line;
     bool serialize = false;
+    bool verbose = qtest_verbose("fuzz");
 
     /* Initialize qgraph and modules */
     qos_graph_init();
+    module_call_init(MODULE_INIT_TARGET_INFO);
+    target_info_qom_set_target();
     module_call_init(MODULE_INIT_FUZZ_TARGET);
     module_call_init(MODULE_INIT_QOM);
     module_call_init(MODULE_INIT_LIBQOS);
@@ -173,22 +183,6 @@ int LLVMFuzzerInitialize(int *argc, char ***argv, char ***envp)
     target_name = strstr(**argv, "-target-");
     if (target_name) {        /* The binary name specifies the target */
         target_name += strlen("-target-");
-        /*
-         * With oss-fuzz, the executable is kept in the root of a directory (we
-         * cannot assume the path). All data (including bios binaries) must be
-         * in the same dir, or a subdir. Thus, we cannot place the pc-bios so
-         * that it would be in exec_dir/../pc-bios.
-         * As a workaround, oss-fuzz allows us to use argv[0] to get the
-         * location of the executable. Using this we add exec_dir/pc-bios to
-         * the datadirs.
-         */
-        bindir = qemu_get_exec_dir();
-        datadir = g_build_filename(bindir, "pc-bios", NULL);
-        if (g_file_test(datadir, G_FILE_TEST_IS_DIR)) {
-            qemu_add_data_dir(datadir);
-        } else {
-            g_free(datadir);
-	}
     } else if (*argc > 1) {  /* The target is specified as an argument */
         target_name = (*argv)[1];
         if (!strstr(target_name, "--fuzz-target=")) {
@@ -218,24 +212,24 @@ int LLVMFuzzerInitialize(int *argc, char ***argv, char ***envp)
         fuzz_target->pre_vm_init();
     }
 
-    /* Run QEMU's softmmu main with the fuzz-target dependent arguments */
+    /* Run QEMU's system main with the fuzz-target dependent arguments */
     cmd_line = fuzz_target->get_init_cmdline(fuzz_target);
     g_string_append_printf(cmd_line, " %s -qtest /dev/null ",
-                           getenv("QTEST_LOG") ? "" : "-qtest-log none");
+                           verbose ? "" : "-qtest-log none");
 
     /* Split the runcmd into an argv and argc */
     wordexp_t result;
     wordexp(cmd_line->str, &result, 0);
     g_string_free(cmd_line, true);
 
-    if (getenv("QTEST_LOG")) {
+    if (verbose) {
         pretty_cmd_line  = g_strjoinv(" ", result.we_wordv + 1);
         printf("Starting %s with Arguments: %s\n",
                 result.we_wordv[0], pretty_cmd_line);
         g_free(pretty_cmd_line);
     }
 
-    qemu_init(result.we_wordc, result.we_wordv, NULL);
+    qemu_init(result.we_wordc, result.we_wordv);
 
     /* re-enable the rcu atfork, which was previously disabled in qemu_init */
     rcu_enable_atfork();

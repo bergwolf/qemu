@@ -9,7 +9,6 @@
  */
 
 #include "qemu/osdep.h"
-#include "qemu-common.h"
 
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_ids.h"
@@ -29,21 +28,6 @@ void remote_iohub_init(RemoteIOHubState *iohub)
     for (pirq = 0; pirq < REMOTE_IOHUB_NB_PIRQS; pirq++) {
         qemu_mutex_init(&iohub->irq_level_lock[pirq]);
         iohub->irq_level[pirq] = 0;
-        event_notifier_init_fd(&iohub->irqfds[pirq], -1);
-        event_notifier_init_fd(&iohub->resamplefds[pirq], -1);
-    }
-}
-
-void remote_iohub_finalize(RemoteIOHubState *iohub)
-{
-    int pirq;
-
-    for (pirq = 0; pirq < REMOTE_IOHUB_NB_PIRQS; pirq++) {
-        qemu_set_fd_handler(event_notifier_get_fd(&iohub->resamplefds[pirq]),
-                            NULL, NULL, NULL);
-        event_notifier_cleanup(&iohub->irqfds[pirq]);
-        event_notifier_cleanup(&iohub->resamplefds[pirq]);
-        qemu_mutex_destroy(&iohub->irq_level_lock[pirq]);
     }
 }
 
@@ -99,9 +83,12 @@ void process_set_irqfd_msg(PCIDevice *pci_dev, MPQemuMsg *msg)
 
     pirq = remote_iohub_map_irq(pci_dev, intx);
 
-    if (event_notifier_get_fd(&iohub->irqfds[pirq]) != -1) {
-        qemu_set_fd_handler(event_notifier_get_fd(&iohub->resamplefds[pirq]),
-                            NULL, NULL, NULL);
+    if (event_notifier_initialized(&iohub->irqfds[pirq])) {
+        if (event_notifier_initialized(&iohub->resamplefds[pirq])) {
+            qemu_set_fd_handler(
+                event_notifier_get_fd(&iohub->resamplefds[pirq]),
+                NULL, NULL, NULL);
+        }
         event_notifier_cleanup(&iohub->irqfds[pirq]);
         event_notifier_cleanup(&iohub->resamplefds[pirq]);
         memset(&iohub->token[pirq], 0, sizeof(ResampleToken));

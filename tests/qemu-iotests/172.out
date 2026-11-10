@@ -15,7 +15,6 @@ Testing:
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -29,6 +28,9 @@ Testing:
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "288"
 
 
@@ -43,7 +45,6 @@ Testing: -fda TEST_DIR/t.qcow2
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -57,6 +58,9 @@ Testing: -fda TEST_DIR/t.qcow2
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 floppy0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -65,9 +69,6 @@ floppy0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -81,7 +82,6 @@ Testing: -fdb TEST_DIR/t.qcow2
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -95,6 +95,9 @@ Testing: -fdb TEST_DIR/t.qcow2
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
               dev: floppy, id ""
                 unit = 0 (0x0)
@@ -107,6 +110,9 @@ Testing: -fdb TEST_DIR/t.qcow2
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "288"
 floppy1 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -120,9 +126,6 @@ ide1-cd0: [not inserted]
 floppy0: [not inserted]
     Attached to:      /machine/unattached/device[N]
     Removable device: not locked, tray closed
-
-sd0: [not inserted]
-    Removable device: not locked, tray closed
 (qemu) quit
 
 
@@ -135,7 +138,6 @@ Testing: -fda TEST_DIR/t.qcow2 -fdb TEST_DIR/t.qcow2.2
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -149,6 +151,9 @@ Testing: -fda TEST_DIR/t.qcow2 -fdb TEST_DIR/t.qcow2.2
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
               dev: floppy, id ""
                 unit = 0 (0x0)
@@ -161,6 +166,9 @@ Testing: -fda TEST_DIR/t.qcow2 -fdb TEST_DIR/t.qcow2.2
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 floppy0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -175,9 +183,6 @@ floppy1 (NODE_NAME): TEST_DIR/t.qcow2.2 (qcow2)
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
     Removable device: not locked, tray closed
-
-sd0: [not inserted]
-    Removable device: not locked, tray closed
 (qemu) quit
 
 
@@ -190,7 +195,6 @@ Testing: -fdb
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -204,6 +208,9 @@ Testing: -fdb
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "288"
               dev: floppy, id ""
                 unit = 0 (0x0)
@@ -216,6 +223,9 @@ Testing: -fdb
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "288"
 
 
@@ -230,7 +240,6 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -244,6 +253,9 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 floppy0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -252,9 +264,6 @@ floppy0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -268,7 +277,6 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2,index=1
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -282,6 +290,9 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2,index=1
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
               dev: floppy, id ""
                 unit = 0 (0x0)
@@ -294,6 +305,9 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2,index=1
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "288"
 floppy1 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -307,9 +321,6 @@ ide1-cd0: [not inserted]
 floppy0: [not inserted]
     Attached to:      /machine/unattached/device[N]
     Removable device: not locked, tray closed
-
-sd0: [not inserted]
-    Removable device: not locked, tray closed
 (qemu) quit
 
 
@@ -322,7 +333,6 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2 -drive if=floppy,file=TEST_DIR/t
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -336,6 +346,9 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2 -drive if=floppy,file=TEST_DIR/t
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
               dev: floppy, id ""
                 unit = 0 (0x0)
@@ -348,6 +361,9 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2 -drive if=floppy,file=TEST_DIR/t
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 floppy0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -361,9 +377,6 @@ floppy1 (NODE_NAME): TEST_DIR/t.qcow2.2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -380,7 +393,6 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -394,6 +406,9 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/peripheral-anon/device[N]
@@ -402,9 +417,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -418,7 +430,6 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0,unit=1
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -432,6 +443,9 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0,unit=1
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/peripheral-anon/device[N]
@@ -440,9 +454,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -456,7 +467,6 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qco
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -470,6 +480,9 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qco
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
               dev: floppy, id ""
                 unit = 0 (0x0)
@@ -482,6 +495,9 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qco
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/peripheral-anon/device[N]
@@ -495,9 +511,6 @@ none1 (NODE_NAME): TEST_DIR/t.qcow2.2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -520,7 +533,6 @@ Testing: -fda TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -534,6 +546,9 @@ Testing: -fda TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
               dev: floppy, id ""
                 unit = 0 (0x0)
@@ -546,6 +561,9 @@ Testing: -fda TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 floppy0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -559,9 +577,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2.2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -575,7 +590,6 @@ Testing: -fda TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -589,6 +603,9 @@ Testing: -fda TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
               dev: floppy, id ""
                 unit = 0 (0x0)
@@ -601,6 +618,9 @@ Testing: -fda TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 floppy0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -615,9 +635,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2.2 (qcow2)
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
     Removable device: not locked, tray closed
-
-sd0: [not inserted]
-    Removable device: not locked, tray closed
 (qemu) quit
 
 
@@ -630,7 +647,6 @@ Testing: -fdb TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -644,6 +660,9 @@ Testing: -fdb TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
               dev: floppy, id ""
                 unit = 1 (0x1)
@@ -656,6 +675,9 @@ Testing: -fdb TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 floppy1 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -669,9 +691,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2.2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -685,7 +704,6 @@ Testing: -fdb TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -699,6 +717,9 @@ Testing: -fdb TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
               dev: floppy, id ""
                 unit = 1 (0x1)
@@ -711,6 +732,9 @@ Testing: -fdb TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.qcow2.2 -device fl
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 floppy1 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -724,9 +748,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2.2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -749,7 +770,6 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.q
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -763,6 +783,9 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.q
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
               dev: floppy, id ""
                 unit = 0 (0x0)
@@ -775,6 +798,9 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.q
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 floppy0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -788,9 +814,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2.2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -804,7 +827,6 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.q
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -818,6 +840,9 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.q
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
               dev: floppy, id ""
                 unit = 0 (0x0)
@@ -830,6 +855,9 @@ Testing: -drive if=floppy,file=TEST_DIR/t.qcow2 -drive if=none,file=TEST_DIR/t.q
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 floppy0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/unattached/device[N]
@@ -843,9 +871,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2.2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -865,7 +890,6 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -global floppy.drive=none0 -device
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -879,6 +903,9 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -global floppy.drive=none0 -device
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/peripheral-anon/device[N]
@@ -887,9 +914,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -933,7 +957,6 @@ Testing: -device floppy
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -947,6 +970,9 @@ Testing: -device floppy
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "288"
 
 Testing: -device floppy,drive-type=120
@@ -958,7 +984,6 @@ Testing: -device floppy,drive-type=120
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -972,6 +997,9 @@ Testing: -device floppy,drive-type=120
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "120"
 
 Testing: -device floppy,drive-type=144
@@ -983,7 +1011,6 @@ Testing: -device floppy,drive-type=144
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -997,6 +1024,9 @@ Testing: -device floppy,drive-type=144
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 
 Testing: -device floppy,drive-type=288
@@ -1008,7 +1038,6 @@ Testing: -device floppy,drive-type=288
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -1022,6 +1051,9 @@ Testing: -device floppy,drive-type=288
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "288"
 
 
@@ -1036,7 +1068,6 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0,drive-t
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -1050,6 +1081,9 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0,drive-t
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "120"
 none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/peripheral-anon/device[N]
@@ -1058,9 +1092,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -1074,7 +1105,6 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0,drive-t
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -1088,6 +1118,9 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0,drive-t
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "288"
 none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/peripheral-anon/device[N]
@@ -1096,9 +1129,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -1115,7 +1145,6 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0,logical
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -1129,6 +1158,9 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0,logical
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/peripheral-anon/device[N]
@@ -1137,9 +1169,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 
@@ -1153,7 +1182,6 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0,physica
             fdtypeA = "auto"
             fdtypeB = "auto"
             fallback = "288"
-            isa irq 6
             bus: floppy-bus.0
               type floppy-bus
               dev: floppy, id ""
@@ -1167,6 +1195,9 @@ Testing: -drive if=none,file=TEST_DIR/t.qcow2 -device floppy,drive=none0,physica
                 discard_granularity = 4294967295 (4 GiB)
                 write-cache = "auto"
                 share-rw = false
+                account-invalid = "auto"
+                account-failed = "auto"
+                stats-intervals = <null>
                 drive-type = "144"
 none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
     Attached to:      /machine/peripheral-anon/device[N]
@@ -1175,9 +1206,6 @@ none0 (NODE_NAME): TEST_DIR/t.qcow2 (qcow2)
 
 ide1-cd0: [not inserted]
     Attached to:      /machine/unattached/device[N]
-    Removable device: not locked, tray closed
-
-sd0: [not inserted]
     Removable device: not locked, tray closed
 (qemu) quit
 

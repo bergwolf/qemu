@@ -12,11 +12,11 @@
  */
 
 #include "qemu/osdep.h"
-
+#include "qemu/memalign.h"
 #include "qapi/error.h"
-#include "sysemu/memory_mapping.h"
+#include "system/memory_mapping.h"
 #include "migration/vmstate.h"
-#include "hw/qdev-core.h"
+#include "hw/core/qdev.h"
 #include "hw/acpi/tpm.h"
 #include "tpm_ppi.h"
 #include "trace.h"
@@ -47,11 +47,23 @@ void tpm_ppi_reset(TPMPPI *tpmppi)
 void tpm_ppi_init(TPMPPI *tpmppi, MemoryRegion *m,
                   hwaddr addr, Object *obj)
 {
-    tpmppi->buf = qemu_memalign(qemu_real_host_page_size,
-                                HOST_PAGE_ALIGN(TPM_PPI_ADDR_SIZE));
+    size_t host_page_size = qemu_real_host_page_size();
+
+    tpmppi->buf = qemu_memalign(host_page_size,
+                                ROUND_UP(TPM_PPI_ADDR_SIZE, host_page_size));
     memory_region_init_ram_device_ptr(&tpmppi->ram, obj, "tpm-ppi",
                                       TPM_PPI_ADDR_SIZE, tpmppi->buf);
     vmstate_register_ram(&tpmppi->ram, DEVICE(obj));
 
     memory_region_add_subregion(m, addr, &tpmppi->ram);
+}
+
+void tpm_ppi_uninit(TPMPPI *tpmppi, MemoryRegion *m, Object *obj)
+{
+    memory_region_del_subregion(m, &tpmppi->ram);
+
+    vmstate_unregister_ram(&tpmppi->ram, DEVICE(obj));
+
+    qemu_vfree(tpmppi->buf);
+    tpmppi->buf = NULL;
 }

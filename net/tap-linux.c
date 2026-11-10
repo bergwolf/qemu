@@ -24,7 +24,6 @@
  */
 
 #include "qemu/osdep.h"
-#include "qemu-common.h"
 #include "tap_int.h"
 #include "tap-linux.h"
 #include "net/tap.h"
@@ -35,6 +34,7 @@
 #include "qapi/error.h"
 #include "qemu/error-report.h"
 #include "qemu/cutils.h"
+#include "qemu/sockets.h"
 
 #define PATH_NET_TUN "/dev/net/tun"
 
@@ -46,10 +46,21 @@ int tap_open(char *ifname, int ifname_size, int *vnet_hdr,
     int len = sizeof(struct virtio_net_hdr);
     unsigned int features;
 
-    TFR(fd = open(PATH_NET_TUN, O_RDWR));
+
+    ret = if_nametoindex(ifname);
+    if (ret) {
+        g_autofree char *file = g_strdup_printf("/dev/tap%d", ret);
+        fd = open(file, O_RDWR);
+    } else {
+        fd = -1;
+    }
+
     if (fd < 0) {
-        error_setg_errno(errp, errno, "could not open %s", PATH_NET_TUN);
-        return -1;
+        fd = RETRY_ON_EINTR(open(PATH_NET_TUN, O_RDWR));
+        if (fd < 0) {
+            error_setg_file_open(errp, errno, PATH_NET_TUN);
+            return -1;
+        }
     }
     memset(&ifr, 0, sizeof(ifr));
     ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
@@ -114,7 +125,12 @@ int tap_open(char *ifname, int ifname_size, int *vnet_hdr,
         return -1;
     }
     pstrcpy(ifname, ifname_size, ifr.ifr_name);
-    fcntl(fd, F_SETFL, O_NONBLOCK);
+
+    if (!qemu_set_blocking(fd, false, errp)) {
+        close(fd);
+        return -1;
+    }
+
     return fd;
 }
 
@@ -128,23 +144,14 @@ int tap_open(char *ifname, int ifname_size, int *vnet_hdr,
  * Ethernet NICs generally have txqueuelen=1000, so 1Mb is
  * a good value, given a 1500 byte MTU.
  */
-#define TAP_DEFAULT_SNDBUF 0
-
-void tap_set_sndbuf(int fd, const NetdevTapOptions *tap, Error **errp)
+bool tap_set_sndbuf(int fd, int sndbuf, Error **errp)
 {
-    int sndbuf;
-
-    sndbuf = !tap->has_sndbuf       ? TAP_DEFAULT_SNDBUF :
-             tap->sndbuf > INT_MAX  ? INT_MAX :
-             tap->sndbuf;
-
-    if (!sndbuf) {
-        sndbuf = INT_MAX;
-    }
-
-    if (ioctl(fd, TUNSETSNDBUF, &sndbuf) == -1 && tap->has_sndbuf) {
+    if (ioctl(fd, TUNSETSNDBUF, &sndbuf) == -1) {
         error_setg_errno(errp, errno, "TUNSETSNDBUF ioctl failed");
+        return false;
     }
+
+    return true;
 }
 
 int tap_probe_vnet_hdr(int fd, Error **errp)
@@ -174,32 +181,36 @@ int tap_probe_has_ufo(int fd)
     return 1;
 }
 
-/* Verify that we can assign given length */
-int tap_probe_vnet_hdr_len(int fd, int len)
+int tap_probe_has_uso(int fd)
 {
-    int orig;
-    if (ioctl(fd, TUNGETVNETHDRSZ, &orig) == -1) {
+    unsigned offload;
+
+    offload = TUN_F_CSUM | TUN_F_USO4 | TUN_F_USO6;
+
+    if (ioctl(fd, TUNSETOFFLOAD, offload) < 0) {
         return 0;
-    }
-    if (ioctl(fd, TUNSETVNETHDRSZ, &len) == -1) {
-        return 0;
-    }
-    /* Restore original length: we can't handle failure. */
-    if (ioctl(fd, TUNSETVNETHDRSZ, &orig) == -1) {
-        fprintf(stderr, "TUNGETVNETHDRSZ ioctl() failed: %s. Exiting.\n",
-                strerror(errno));
-        abort();
-        return -errno;
     }
     return 1;
 }
 
+bool tap_probe_has_tunnel(int fd)
+{
+    unsigned offload;
+
+    offload = TUN_F_CSUM | TUN_F_TSO4 | TUN_F_UDP_TUNNEL_GSO;
+    if (ioctl(fd, TUNSETOFFLOAD, offload) < 0) {
+        return false;
+    }
+    return true;
+}
+
 void tap_fd_set_vnet_hdr_len(int fd, int len)
 {
-    if (ioctl(fd, TUNSETVNETHDRSZ, &len) == -1) {
-        fprintf(stderr, "TUNSETVNETHDRSZ ioctl() failed: %s. Exiting.\n",
-                strerror(errno));
-        abort();
+    int ret;
+
+    ret = ioctl(fd, TUNSETVNETHDRSZ, &len);
+    if (ret != 0) {
+        error_report("TUNSETVNETHDRSZ ioctl() failed: %s.", strerror(errno));
     }
 }
 
@@ -237,8 +248,7 @@ int tap_fd_set_vnet_be(int fd, int is_be)
     abort();
 }
 
-void tap_fd_set_offload(int fd, int csum, int tso4,
-                        int tso6, int ecn, int ufo)
+void tap_fd_set_offload(int fd, const NetOffloads *ol)
 {
     unsigned int offload = 0;
 
@@ -247,23 +257,42 @@ void tap_fd_set_offload(int fd, int csum, int tso4,
         return;
     }
 
-    if (csum) {
+    if (ol->csum) {
         offload |= TUN_F_CSUM;
-        if (tso4)
+        if (ol->tso4) {
             offload |= TUN_F_TSO4;
-        if (tso6)
+        }
+        if (ol->tso6) {
             offload |= TUN_F_TSO6;
-        if ((tso4 || tso6) && ecn)
+        }
+        if ((ol->tso4 || ol->tso6) && ol->ecn) {
             offload |= TUN_F_TSO_ECN;
-        if (ufo)
+        }
+        if (ol->ufo) {
             offload |= TUN_F_UFO;
+        }
+        if (ol->uso4) {
+            offload |= TUN_F_USO4;
+        }
+        if (ol->uso6) {
+            offload |= TUN_F_USO6;
+        }
+        if (ol->tnl) {
+            offload |= TUN_F_UDP_TUNNEL_GSO;
+        }
+        if (ol->tnl_csum) {
+            offload |= TUN_F_UDP_TUNNEL_GSO_CSUM;
+        }
     }
 
     if (ioctl(fd, TUNSETOFFLOAD, offload) != 0) {
-        offload &= ~TUN_F_UFO;
+        offload &= ~(TUN_F_USO4 | TUN_F_USO6);
         if (ioctl(fd, TUNSETOFFLOAD, offload) != 0) {
-            fprintf(stderr, "TUNSETOFFLOAD ioctl() failed: %s\n",
+            offload &= ~TUN_F_UFO;
+            if (ioctl(fd, TUNSETOFFLOAD, offload) != 0) {
+                fprintf(stderr, "TUNSETOFFLOAD ioctl() failed: %s\n",
                     strerror(errno));
+            }
         }
     }
 }
@@ -316,6 +345,35 @@ int tap_fd_get_ifname(int fd, char *ifname)
 
     pstrcpy(ifname, sizeof(ifr.ifr_name), ifr.ifr_name);
     return 0;
+}
+
+int tap_fd_get_mtu(int fd)
+{
+    struct ifreq ifr;
+    int s, ret, mtu;
+
+    memset(&ifr, 0, sizeof(ifr));
+    if (tap_fd_get_ifname(fd, ifr.ifr_name) != 0) {
+        return -1;
+    }
+
+    s = qemu_socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) {
+        error_report("could not create control socket: %s",
+                      strerror(errno));
+        return -1;
+    }
+
+    ret = ioctl(s, SIOCGIFMTU, &ifr);
+    if (ret != 0) {
+        error_report("SIOCGIFMTU ioctl() failed: %s", strerror(errno));
+        close(s);
+        return -1;
+    }
+
+    mtu = ifr.ifr_mtu;
+    close(s);
+    return mtu;
 }
 
 int tap_fd_set_steering_ebpf(int fd, int prog_fd)

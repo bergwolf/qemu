@@ -7,10 +7,7 @@
 /* Kernels can be configured with 64KB pages */
 #define INITRD_PAGE_SIZE (64 * KiB)
 
-#include "exec/memory.h"
-
-/* gt64xxx.c */
-PCIBus *gt64120_register(qemu_irq *pic);
+#include "system/memory.h"
 
 /* bonito.c */
 PCIBus *bonito_init(qemu_irq *pic);

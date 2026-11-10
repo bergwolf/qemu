@@ -1,8 +1,9 @@
-#ifndef QEMU_I2C_MUX_PCA954X
-#define QEMU_I2C_MUX_PCA954X
+#ifndef QEMU_I2C_MUX_PCA954X_H
+#define QEMU_I2C_MUX_PCA954X_H
 
 #include "hw/i2c/i2c.h"
 
+#define TYPE_PCA9545 "pca9545"
 #define TYPE_PCA9546 "pca9546"
 #define TYPE_PCA9548 "pca9548"
 

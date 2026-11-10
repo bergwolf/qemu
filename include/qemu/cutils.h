@@ -1,6 +1,41 @@
 #ifndef QEMU_CUTILS_H
 #define QEMU_CUTILS_H
 
+/*
+ * si_prefix:
+ * @exp10: exponent of 10, a multiple of 3 between -18 and 18 inclusive.
+ *
+ * Return a SI prefix (n, u, m, K, M, etc.) corresponding
+ * to the given exponent of 10.
+ */
+const char *si_prefix(unsigned int exp10);
+
+/*
+ * iec_binary_prefix:
+ * @exp2: exponent of 2, a multiple of 10 between 0 and 60 inclusive.
+ *
+ * Return an IEC binary prefix (Ki, Mi, etc.) corresponding
+ * to the given exponent of 2.
+ */
+const char *iec_binary_prefix(unsigned int exp2);
+
+const char *str_array_elem_or_null(const char *const *array,
+                                   size_t nelem, uint64_t index);
+
+/**
+ * STR_ARRAY_ELEM_OR_NULL() - Return a string array element, or NULL if
+ *                            out of bounds
+ * @array: array of strings to index
+ * @index: index of the element to return
+ *
+ * Return @array[@index] if @index is a valid index, otherwise return
+ * NULL. @index is converted to uint64_t, so negative values of signed
+ * types are out of bounds and also yield NULL. Useful to look up entries
+ * in enum-indexed string tables without a prior bounds check.
+ */
+#define STR_ARRAY_ELEM_OR_NULL(array, index) \
+    str_array_elem_or_null(array, ARRAY_SIZE(array), index)
+
 /**
  * pstrcpy:
  * @buf: buffer to copy string into
@@ -83,22 +118,7 @@ int strstart(const char *str, const char *val, const char **ptr);
  *          false otherwise.
  */
 int stristart(const char *str, const char *val, const char **ptr);
-/**
- * qemu_strnlen:
- * @s: string
- * @max_len: maximum number of bytes in @s to scan
- *
- * Return the length of the string @s, like strlen(), but do not
- * examine more than @max_len bytes of the memory pointed to by @s.
- * If no NUL terminator is found within @max_len bytes, then return
- * @max_len instead.
- *
- * This function has the same behaviour as the POSIX strnlen()
- * function.
- *
- * Returns: length of @s in bytes, or @max_len, whichever is smaller.
- */
-int qemu_strnlen(const char *s, int max_len);
+
 /**
  * qemu_strsep:
  * @input: pointer to string to parse
@@ -129,9 +149,6 @@ static inline const char *qemu_strchrnul(const char *s, int c)
 const char *qemu_strchrnul(const char *s, int c);
 #endif
 time_t mktimegm(struct tm *tm);
-int qemu_fdatasync(int fd);
-int qemu_msync(void *addr, size_t length, int fd);
-int fcntl_setfl(int fd, int flag);
 int qemu_parse_fd(const char *param);
 int qemu_strtoi(const char *nptr, const char **endptr, int base,
                 int *result);
@@ -148,9 +165,8 @@ int qemu_strtou64(const char *nptr, const char **endptr, int base,
 int qemu_strtod(const char *nptr, const char **endptr, double *result);
 int qemu_strtod_finite(const char *nptr, const char **endptr, double *result);
 
-int parse_uint(const char *s, unsigned long long *value, char **endptr,
-               int base);
-int parse_uint_full(const char *s, unsigned long long *value, int base);
+int parse_uint(const char *s, const char **endptr, int base, uint64_t *value);
+int parse_uint_full(const char *s, int base, uint64_t *value);
 
 int qemu_strtosz(const char *nptr, const char **end, uint64_t *result);
 int qemu_strtosz_MiB(const char *nptr, const char **end, uint64_t *result);
@@ -173,8 +189,38 @@ char *freq_to_str(uint64_t freq_hz);
 /* used to print char* safely */
 #define STR_OR_NULL(str) ((str) ? (str) : "null")
 
-bool buffer_is_zero(const void *buf, size_t len);
+/*
+ * Check if a buffer is all zeroes.
+ */
+
+bool buffer_is_zero_ool(const void *vbuf, size_t len);
+bool buffer_is_zero_ge256(const void *vbuf, size_t len);
 bool test_buffer_is_zero_next_accel(void);
+
+static inline bool buffer_is_zero_sample3(const char *buf, size_t len)
+{
+    /*
+     * For any reasonably sized buffer, these three samples come from
+     * three different cachelines.  In qemu-img usage, we find that
+     * each byte eliminates more than half of all buffer testing.
+     * It is therefore critical to performance that the byte tests
+     * short-circuit, so that we do not pull in additional cache lines.
+     * Do not "optimize" this to !(a | b | c).
+     */
+    return !buf[0] && !buf[len - 1] && !buf[len / 2];
+}
+
+#ifdef __OPTIMIZE__
+static inline bool buffer_is_zero(const void *buf, size_t len)
+{
+    return (__builtin_constant_p(len) && len >= 256
+            ? buffer_is_zero_sample3(buf, len) &&
+              buffer_is_zero_ge256(buf, len)
+            : buffer_is_zero_ool(buf, len));
+}
+#else
+#define buffer_is_zero  buffer_is_zero_ool
+#endif
 
 /*
  * Implementation of ULEB128 (http://en.wikipedia.org/wiki/LEB128)
@@ -196,15 +242,31 @@ int uleb128_decode_small(const uint8_t *in, uint32_t *n);
  */
 int qemu_pstrcmp0(const char **str1, const char **str2);
 
+/* Find program directory, and save it for later usage with
+ * get_relocated_path().
+ * Try OS specific API first, if not working, parse from argv0. */
+void qemu_init_exec_dir(const char *argv0);
 
 /**
  * get_relocated_path:
  * @dir: the directory (typically a `CONFIG_*DIR` variable) to be relocated.
  *
  * Returns a path for @dir that uses the directory of the running executable
- * as the prefix.  For example, if `bindir` is `/usr/bin` and @dir is
- * `/usr/share/qemu`, the function will append `../share/qemu` to the
- * directory that contains the running executable and return the result.
+ * as the prefix.
+ *
+ * When a directory named `qemu-bundle` exists in the directory of the running
+ * executable, the path to the directory will be prepended to @dir. For
+ * example, if the directory of the running executable is `/qemu/build` @dir
+ * is `/usr/share/qemu`, the result will be
+ * `/qemu/build/qemu-bundle/usr/share/qemu`. The directory is expected to exist
+ * in the build tree.
+ *
+ * Otherwise, the directory of the running executable will be used as the
+ * prefix and it appends the relative path from `bindir` to @dir. For example,
+ * if the directory of the running executable is `/opt/qemu/bin`, `bindir` is
+ * `/usr/bin` and @dir is `/usr/share/qemu`, the result will be
+ * `/opt/qemu/bin/../share/qemu`.
+ *
  * The returned string should be freed by the caller.
  */
 char *get_relocated_path(const char *dir);
@@ -213,5 +275,48 @@ static inline const char *yes_no(bool b)
 {
      return b ? "yes" : "no";
 }
+
+/*
+ * helper to parse debug environment variables
+ */
+int parse_debug_env(const char *name, int max, int initial);
+
+/**
+ * qemu_hexdump_line:
+ * @str: GString into which to append
+ * @buf: buffer to dump
+ * @len: number of bytes to dump
+ * @unit_len: add a space between every @unit_len bytes
+ * @block_len: add an extra space between every @block_len bytes
+ *
+ * Append @len bytes of @buf as hexadecimal into @str.
+ * Add spaces between every @unit_len and @block_len bytes.
+ * If @str is NULL, allocate a new string and return it;
+ * otherwise return @str.
+ */
+GString *qemu_hexdump_line(GString *str, const void *buf, size_t len,
+                           size_t unit_len, size_t block_len);
+
+/*
+ * Hexdump a buffer to a file. An optional string prefix is added to every line
+ */
+
+void qemu_hexdump(FILE *fp, const char *prefix,
+                  const void *bufptr, size_t size);
+
+/**
+ * qemu_hexdump_to_buffer:
+ * @buffer: output string buffer
+ * @buffer_size: amount of available space in buffer. Must be at least
+ *               data_size*2+1.
+ * @data: input bytes
+ * @data_size: number of bytes in data
+ *
+ * Converts the @data_size bytes in @data into hex digit pairs, writing them to
+ * @buffer. Finally, a nul terminating character is written; @buffer therefore
+ * needs space for (data_size*2+1) chars.
+ */
+void qemu_hexdump_to_buffer(char *restrict buffer, size_t buffer_size,
+                            const uint8_t *restrict data, size_t data_size);
 
 #endif

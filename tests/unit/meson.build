@@ -10,18 +10,20 @@ tests = {
   'check-qnull': [],
   'check-qobject': [],
   'check-qjson': [],
+  'check-json-parser': [],
   'check-qlit': [],
+  'test-error-report': [],
   'test-qobject-output-visitor': [testqapi],
   'test-clone-visitor': [testqapi],
   'test-qobject-input-visitor': [testqapi],
   'test-forward-visitor': [testqapi],
   'test-string-input-visitor': [testqapi],
   'test-string-output-visitor': [testqapi],
-  'test-opts-visitor': [testqapi],
   'test-visitor-serialization': [testqapi],
   'test-bitmap': [],
-  # all code tested by test-x86-cpuid is inside topology.h
-  'test-x86-cpuid': [],
+  'test-resv-mem': [],
+  # all code tested by test-x86-topo is inside topology.h
+  'test-x86-topo': [],
   'test-cutils': [],
   'test-div128': [],
   'test-shift128': [],
@@ -35,6 +37,7 @@ tests = {
   'test-rcu-slist': [],
   'test-qdist': [],
   'test-qht': [],
+  'test-qtree': [],
   'test-bitops': [],
   'test-bitcnt': [],
   'test-qgraph': ['../qtest/libqos/qgraph.c'],
@@ -43,10 +46,10 @@ tests = {
   'test-qemu-opts': [],
   'test-keyval': [testqapi],
   'test-logging': [],
-  'test-uuid': [],
-  'ptimer-test': ['ptimer-test-stubs.c', meson.project_source_root() / 'hw/core/ptimer.c'],
   'test-qapi-util': [],
-  'test-smp-parse': [qom, meson.project_source_root() / 'hw/core/machine-smp.c'],
+  'test-interval-tree': [],
+  'test-fifo': [],
+  'test-envlist': [],
 }
 
 if have_system or have_tools
@@ -55,7 +58,7 @@ if have_system or have_tools
   }
 
   if seccomp.found()
-    tests += {'test-seccomp': ['../../softmmu/qemu-seccomp.c', seccomp]}
+    tests += {'test-seccomp': ['../../system/qemu-seccomp.c', seccomp]}
   endif
 endif
 
@@ -72,12 +75,15 @@ if have_block
     'test-blockjob': [testblock],
     'test-blockjob-txn': [testblock],
     'test-block-backend': [testblock],
+    'test-block-accounting': [testblock],
     'test-block-iothread': [testblock],
     'test-write-threshold': [testblock],
     'test-crypto-hash': [crypto],
     'test-crypto-hmac': [crypto],
     'test-crypto-cipher': [crypto],
+    'test-crypto-akcipher': [crypto],
     'test-crypto-secret': [crypto, keyutils],
+    'test-crypto-der': [crypto],
     'test-authz-simple': [authz],
     'test-authz-list': [authz],
     'test-authz-listfile': [authz],
@@ -86,52 +92,62 @@ if have_block
     'test-io-channel-file': ['io-channel-helpers.c', io],
     'test-io-channel-command': ['io-channel-helpers.c', io],
     'test-io-channel-buffer': ['io-channel-helpers.c', io],
+    'test-io-channel-null': [io],
     'test-crypto-ivgen': [io],
     'test-crypto-afsplit': [io],
     'test-crypto-block': [io],
+    'test-timed-average': [],
+    'test-uuid': [],
   }
   if gnutls.found() and \
      tasn1.found() and \
-     'CONFIG_POSIX' in config_host
+     host_os != 'windows'
     tests += {
-      'test-crypto-tlscredsx509': ['crypto-tls-x509-helpers.c', 'pkix_asn1_tab.c',
+      'test-crypto-tlscredsx509': ['crypto-tls-x509-helpers.c',
                                    tasn1, crypto, gnutls],
-      'test-crypto-tlssession': ['crypto-tls-x509-helpers.c', 'pkix_asn1_tab.c', 'crypto-tls-psk-helpers.c',
+      'test-crypto-tlssession': ['crypto-tls-x509-helpers.c', 'crypto-tls-psk-helpers.c',
                                  tasn1, crypto, gnutls],
-      'test-io-channel-tls': ['io-channel-helpers.c', 'crypto-tls-x509-helpers.c', 'pkix_asn1_tab.c',
+      'test-io-channel-tls': ['io-channel-helpers.c', 'crypto-tls-x509-helpers.c',
                               tasn1, io, crypto, gnutls]}
   endif
   if pam.found()
     tests += {'test-authz-pam': [authz]}
   endif
-  if xts == 'private'
-    tests += {'test-crypto-xts': [crypto, io]}
-  endif
-  if 'CONFIG_POSIX' in config_host
-    tests += {'test-image-locking': [testblock]}
+  if host_os != 'windows'
+    tests += {
+      'test-io-channel-websock': [io],
+      'test-image-locking': [testblock],
+      'test-nested-aio-poll': [],
+    }
   endif
   if config_host_data.get('CONFIG_REPLICATION')
     tests += {'test-replication': [testblock]}
   endif
-  if nettle.found() or gcrypt.found()
-    tests += {'test-crypto-pbkdf': [io]}
-  endif
-  if config_host_data.get('CONFIG_EPOLL_CREATE1')
-    tests += {'test-fdmon-epoll': [testblock]}
-  endif
+  tests += {'test-crypto-pbkdf': [io]}
 endif
 
 if have_system
   tests += {
+    'ptimer-test': ['ptimer-test-stubs.c', meson.project_source_root() / 'hw/core/ptimer.c'],
     'test-iov': [],
+    'test-opts-visitor': [testqapi],
+    'test-xs-node': [qom],
+    'test-virtio-dmabuf': [meson.project_source_root() / 'hw/display/virtio-dmabuf.c'],
     'test-qmp-cmds': [testqapi],
     'test-xbzrle': [migration],
-    'test-timed-average': [],
     'test-util-sockets': ['socket-helpers.c'],
     'test-base64': [],
     'test-bufferiszero': [],
+    'test-smp-parse': [qom, meson.project_source_root() / 'hw/core/machine-smp.c'],
     'test-vmstate': [migration, io],
-    'test-yank': ['socket-helpers.c', qom, io, chardev]
+    'test-cpr': [migration, io, meson.project_source_root() / 'migration/cpr.c'],
+    'test-yank': ['socket-helpers.c', qom, io, chardev],
+    'test-ram-discard-manager': [
+      'test-ram-discard-manager.c',
+      'test-ram-discard-manager-stubs.c',
+      meson.project_source_root() / 'system/ram-discard-manager.c',
+      genh, qemuutil, qom
+    ],
   }
   if config_host_data.get('CONFIG_INOTIFY1')
     tests += {'test-util-filemonitor': []}
@@ -140,21 +156,22 @@ if have_system
   # Some tests: test-char, test-qdev-global-props, and test-qga,
   # are not runnable under TSan due to a known issue.
   # https://github.com/google/sanitizers/issues/1116
-  if 'CONFIG_TSAN' not in config_host
-    if 'CONFIG_POSIX' in config_host
+  if not get_option('tsan')
+    if host_os != 'windows'
         tests += {
           'test-char': ['socket-helpers.c', qom, io, chardev]
         }
     endif
 
     tests += {
-      'test-qdev-global-props': [qom, hwcore, testqapi]
+      'test-qdev-global-props': [qom, hwcore]
     }
   endif
+  tests += {'test-qdev': [qom, hwcore]}
 endif
 
-if have_ga and targetos == 'linux' and 'CONFIG_TSAN' not in config_host
-  tests += {'test-qga': ['../qtest/libqtest.c']}
+if have_ga and host_os in ['freebsd', 'linux']
+  tests += {'test-qga': ['../qtest/libqmp.c', '../qtest/libqtest.c']}
   test_deps += {'test-qga': qga}
 endif
 
@@ -163,8 +180,18 @@ test_env.set('G_TEST_SRCDIR', meson.current_source_dir())
 test_env.set('G_TEST_BUILDDIR', meson.current_build_dir())
 
 slow_tests = {
-  'test-crypto-tlscredsx509': 45,
-  'test-crypto-tlssession': 45
+  'test-aio-multithread' : 120,
+  'test-bufferiszero': 60,
+  'test-crypto-block' : 300,
+  'test-crypto-tlscredsx509': 90,
+  'test-crypto-tlssession': 90,
+  'test-replication': 60,
+  'rcutorture': 30,
+  'test-rcu-list': 30,
+  'test-rcu-simpleq': 30,
+  'test-rcu-tailq': 30,
+  'test-rcu-slist': 30,
+  'test-thread-pool': 30,
 }
 
 foreach test_name, extra: tests
@@ -186,5 +213,18 @@ foreach test_name, extra: tests
        protocol: 'tap',
        timeout: slow_tests.get(test_name, 30),
        priority: slow_tests.get(test_name, 30),
-       suite: ['unit'])
+       suite: ['unit'] +
+              (slow_tests.has_key(test_name) ? ['slow'] : []))
 endforeach
+
+# Multi targets test
+if multi_target_objects != []
+  test('test-multi-target',
+       executable('test-multi-target',
+                  sources: [multi_target_crates, files('test-multi-target.c')],
+                  dependencies: multi_target_deps,
+                  objects: multi_target_objects,
+                  link_depends: [block_syms, qemu_syms],
+                  link_args: multi_target_link_args),
+       suite: ['unit'])
+endif

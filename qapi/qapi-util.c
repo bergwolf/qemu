@@ -14,12 +14,14 @@
 #include "qapi/compat-policy.h"
 #include "qapi/error.h"
 #include "qemu/ctype.h"
+#include "qemu/error-report.h"
 #include "qapi/qmp/qerror.h"
+#include "qapi/error.h"
 
 CompatPolicy compat_policy;
 
-static bool compat_policy_input_ok1(const char *adjective,
-                                    CompatPolicyInput policy,
+static bool compat_policy_input_ok1(CompatPolicyInput policy,
+                                    const char *adjective,
                                     ErrorClass error_class,
                                     const char *kind, const char *name,
                                     Error **errp)
@@ -27,36 +29,67 @@ static bool compat_policy_input_ok1(const char *adjective,
     switch (policy) {
     case COMPAT_POLICY_INPUT_ACCEPT:
         return true;
+    case COMPAT_POLICY_INPUT_WARN:
+        warn_report("%s %s %s accepted by policy",
+                    adjective, kind, name);
+        return true;
     case COMPAT_POLICY_INPUT_REJECT:
         error_set(errp, error_class, "%s %s %s disabled by policy",
                   adjective, kind, name);
         return false;
     case COMPAT_POLICY_INPUT_CRASH:
+        error_report("%s %s %s disabled by policy, aborting",
+                     adjective, kind, name);
+        /* fallthrough */
     default:
         abort();
     }
 }
 
-bool compat_policy_input_ok(unsigned special_features,
-                            const CompatPolicy *policy,
+bool compat_policy_input_ok(const CompatPolicy *policy,
+                            uint64_t features,
                             ErrorClass error_class,
                             const char *kind, const char *name,
                             Error **errp)
 {
-    if ((special_features & 1u << QAPI_DEPRECATED)
-        && !compat_policy_input_ok1("Deprecated",
-                                    policy->deprecated_input,
+    if ((features & 1u << QAPI_DEPRECATED)
+        && !compat_policy_input_ok1(policy->deprecated_input,
+                                    "Deprecated",
                                     error_class, kind, name, errp)) {
         return false;
     }
-    if ((special_features & (1u << QAPI_UNSTABLE))
-        && !compat_policy_input_ok1("Unstable",
-                                    policy->unstable_input,
+    if ((features & (1u << QAPI_UNSTABLE))
+        && !compat_policy_input_ok1(policy->unstable_input,
+                                    "Unstable",
                                     error_class, kind, name, errp)) {
         return false;
     }
     return true;
 }
+
+bool compat_policy_security_ok(const CompatPolicy *policy,
+                               bool is_secure,
+                               const char *typename,
+                               Error **errp)
+{
+    ERRP_GUARD();
+
+    if (is_secure) {
+        return true;
+    }
+
+    if (!compat_policy_input_ok1(policy->insecure_input,
+                                 "Insecure",
+                                 ERROR_CLASS_GENERIC_ERROR,
+                                 "QOM type", typename, errp)) {
+        error_append_hint(errp, "This type does does not provide a "
+                          "security boundary to protect against "
+                          "untrusted data or actions\n");
+        return false;
+    }
+    return true;
+}
+
 
 const char *qapi_enum_lookup(const QEnumLookup *lookup, int val)
 {
@@ -112,8 +145,8 @@ bool qapi_bool_parse(const char *name, const char *value, bool *obj, Error **err
  * It may be prefixed by __RFQDN_ (downstream extension), where RFQDN
  * may contain only letters, digits, hyphen and period.
  * The special exception for enumeration names is not implemented.
- * See docs/devel/qapi-code-gen.txt for more on QAPI naming rules.
- * Keep this consistent with scripts/qapi.py!
+ * See docs/devel/qapi-code-gen.rst for more on QAPI naming rules.
+ * Keep this consistent with scripts/qapi-gen.py!
  * If @complete, the parse fails unless it consumes @str completely.
  * Return its length on success, -1 on failure.
  */

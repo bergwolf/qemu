@@ -1,24 +1,12 @@
 /*
- *  arm cpu system call stubs
+ * arm cpu system call stubs
  *
- *  Copyright (c) 2013 Stacey D. Son
+ * Copyright (c) 2013 Stacey D. Son
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, see <http://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
-
-#ifndef _TARGET_ARCH_SYSCALL_H_
-#define _TARGET_ARCH_SYSCALL_H_
+#ifndef ARM_TARGET_SYSCALL_H
+#define ARM_TARGET_SYSCALL_H
 
 struct target_pt_regs {
     abi_long uregs[17];
@@ -52,4 +40,4 @@ struct target_pt_regs {
 #define TARGET_HW_MACHINE       "arm"
 #define TARGET_HW_MACHINE_ARCH  "armv7"
 
-#endif /* !_TARGET_ARCH_SYSCALL_H_ */
+#endif /* ARM_TARGET_SYSCALL_H */

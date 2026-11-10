@@ -7,8 +7,8 @@
  * See the COPYING file in the top-level directory.
  */
 
-#ifndef SYSEMU_CPU_OPS_H
-#define SYSEMU_CPU_OPS_H
+#ifndef SYSTEM_CPU_OPS_H
+#define SYSTEM_CPU_OPS_H
 
 #include "hw/core/cpu.h"
 
@@ -17,27 +17,49 @@
  */
 typedef struct SysemuCPUOps {
     /**
+     * @has_work: Callback for checking if there is work to do.
+     *
+     * This callback may be called with or without the BQL.  It must be
+     * idempotent, must not consume work, and must not assume that the BQL
+     * is held or acquire it unconditionally.  State shared with other
+     * threads must use appropriate synchronization.
+     */
+    bool (*has_work)(CPUState *cpu); /* MANDATORY NON-NULL */
+    /**
      * @get_memory_mapping: Callback for obtaining the memory mappings.
      */
-    void (*get_memory_mapping)(CPUState *cpu, MemoryMappingList *list,
+    bool (*get_memory_mapping)(CPUState *cpu, MemoryMappingList *list,
                                Error **errp);
     /**
      * @get_paging_enabled: Callback for inquiring whether paging is enabled.
      */
     bool (*get_paging_enabled)(const CPUState *cpu);
     /**
-     * @get_phys_page_debug: Callback for obtaining a physical address.
+     * @get_phys_addr_debug: Callback for obtaining a physical address.
+     * This must be able to handle a non-page-aligned address, and will
+     * return the physical address corresponding to that address.
+     *
+     * CPUs should prefer to implement translate_for_debug instead of
+     * this (and must do so if their translations are not always valid
+     * for a complete target page or they use memory attributes).
      */
-    hwaddr (*get_phys_page_debug)(CPUState *cpu, vaddr addr);
+    hwaddr (*get_phys_addr_debug)(CPUState *cpu, vaddr addr);
     /**
-     * @get_phys_page_attrs_debug: Callback for obtaining a physical address
-     *       and the associated memory transaction attributes to use for the
-     *       access.
-     * CPUs which use memory transaction attributes should implement this
-     * instead of get_phys_page_debug.
+     * @translate_for_debug: Callback for translating a virtual address into
+     * a physical address for debug purposes.
+     * The implementation should fill in @result with the physical address,
+     * transaction attributes, and log2 of the size of the aligned block of
+     * memory that the translation is valid for.
+     * This must be able to handle a non-page-aligned address, and will
+     * return the physical address corresponding to that address.
+     * The attributes must include the debug flag being set.
+     * Returns false on translation failure; on success returns true and
+     * fills in @result.
+     *
+     * This is the preferred method to implement for new CPUs.
      */
-    hwaddr (*get_phys_page_attrs_debug)(CPUState *cpu, vaddr addr,
-                                        MemTxAttrs *attrs);
+    bool (*translate_for_debug)(CPUState *cpu, vaddr addr,
+                                TranslateForDebugResult *result);
     /**
      * @asidx_from_attrs: Callback to return the CPU AddressSpace to use for
      *       a memory access with the specified memory transaction attributes.
@@ -53,33 +75,61 @@ typedef struct SysemuCPUOps {
      * 32-bit VM coredump.
      */
     int (*write_elf32_note)(WriteCoreDumpFunction f, CPUState *cpu,
-                            int cpuid, void *opaque);
+                            int cpuid, DumpState *s);
     /**
      * @write_elf64_note: Callback for writing a CPU-specific ELF note to a
      * 64-bit VM coredump.
      */
     int (*write_elf64_note)(WriteCoreDumpFunction f, CPUState *cpu,
-                            int cpuid, void *opaque);
+                            int cpuid, DumpState *s);
     /**
      * @write_elf32_qemunote: Callback for writing a CPU- and QEMU-specific ELF
      * note to a 32-bit VM coredump.
      */
     int (*write_elf32_qemunote)(WriteCoreDumpFunction f, CPUState *cpu,
-                                void *opaque);
+                                DumpState *s);
     /**
      * @write_elf64_qemunote: Callback for writing a CPU- and QEMU-specific ELF
      * note to a 64-bit VM coredump.
      */
     int (*write_elf64_qemunote)(WriteCoreDumpFunction f, CPUState *cpu,
-                                void *opaque);
+                                DumpState *s);
     /**
-     * @virtio_is_big_endian: Callback to return %true if a CPU which supports
+     * @get_dump_info: fills @info with the endianness, class and architecture.
+     */
+    void (*get_dump_info)(const CPUState *cpu, ArchDumpInfo *info,
+                          const GuestPhysBlockList *guest_phys_blocks);
+    /**
+     * @get_note_size: returns the size of the ELF notes needed to dump
+     * @nr_cpus cpus, for the ELF @class and @machine reported by
+     * @get_dump_info. Must be set if @get_dump_info is set.
+     */
+    size_t (*get_note_size)(const CPUState *cpu, int class, int machine,
+                            int nr_cpus);
+    /**
+     * @internal_is_big_endian: Callback to return %true if a CPU which supports
      * runtime configurable endianness is currently big-endian.
      * Non-configurable CPUs can use the default implementation of this method.
      * This method should not be used by any callers other than the pre-1.0
-     * virtio devices.
+     * virtio devices and the semihosting interface.
      */
-    bool (*virtio_is_big_endian)(CPUState *cpu);
+    bool (*internal_is_big_endian)(CPUState *cpu);
+
+    /**
+     * @monitor_get_register: Callback to fill @pval with register @name value.
+     *                        This field is legacy, use @gdb_core_xml_file
+     *                        to dump registers instead.
+     * Returns: 0 on success or negative errno on failure.
+     */
+    int (*monitor_get_register)(CPUState *cs, const char *name, int64_t *pval);
+
+#ifdef CONFIG_HMP
+    /**
+     * @monitor_defs: Array of MonitorDef entries. This field is legacy,
+     *                use @gdb_core_xml_file to dump registers instead.
+     */
+    const MonitorDef *monitor_defs;
+#endif
 
     /**
      * @legacy_vmsd: Legacy state for migration.
@@ -89,4 +139,4 @@ typedef struct SysemuCPUOps {
 
 } SysemuCPUOps;
 
-#endif /* SYSEMU_CPU_OPS_H */
+#endif /* SYSTEM_CPU_OPS_H */

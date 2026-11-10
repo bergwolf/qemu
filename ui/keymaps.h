@@ -44,7 +44,7 @@ typedef struct {
 /* "up" flag */
 #define SCANCODE_UP     0x80
 
-/* Additional modifiers to use if not catched another way. */
+/* Additional modifiers to use if not caught another way. */
 #define SCANCODE_SHIFT  0x100
 #define SCANCODE_CTRL   0x200
 #define SCANCODE_ALT    0x400
@@ -52,8 +52,9 @@ typedef struct {
 
 typedef struct kbd_layout_t kbd_layout_t;
 
-kbd_layout_t *init_keyboard_layout(const name2keysym_t *table,
-                                   const char *language, Error **errp);
+kbd_layout_t *kbd_layout_new(const name2keysym_t *table,
+                             const char *language, Error **errp);
+void kbd_layout_free(kbd_layout_t *k);
 int keysym2scancode(kbd_layout_t *k, int keysym,
                     QKbdState *kbd, bool down);
 int keycode_is_keypad(kbd_layout_t *k, int keycode);

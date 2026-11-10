@@ -25,10 +25,10 @@
 #include "hw/i2c/i2c.h"
 #include "migration/vmstate.h"
 #include "qapi/error.h"
+#include "qapi/qapi-builtin-type-infos.h"
 #include "qapi/visitor.h"
 #include "qemu/module.h"
 #include "qemu/log.h"
-#include "qemu/bswap.h"
 
 enum LSM303DLHCMagReg {
     LSM303DLHC_MAG_REG_CRA          = 0x00,
@@ -427,6 +427,8 @@ static int lsm303dlhc_mag_event(I2CSlave *i2c, enum i2c_event event)
         break;
     case I2C_NACK:
         break;
+    default:
+        return -1;
     }
 
     s->len = 0;
@@ -440,7 +442,7 @@ static const VMStateDescription vmstate_lsm303dlhc_mag = {
     .name = "LSM303DLHC_MAG",
     .version_id = 0,
     .minimum_version_id = 0,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
 
         VMSTATE_I2C_SLAVE(parent_obj, LSM303DLHCMagState),
         VMSTATE_UINT8(len, LSM303DLHCMagState),
@@ -508,32 +510,32 @@ static void lsm303dlhc_mag_reset(DeviceState *dev)
  */
 static void lsm303dlhc_mag_initfn(Object *obj)
 {
-    object_property_add(obj, "mag-x", "int",
-                lsm303dlhc_mag_get_x,
-                lsm303dlhc_mag_set_x, NULL, NULL);
+    object_property_add(obj, "mag-x", "int", &int_type_info,
+                        lsm303dlhc_mag_get_x,
+                        lsm303dlhc_mag_set_x, NULL, NULL);
 
-    object_property_add(obj, "mag-y", "int",
-                lsm303dlhc_mag_get_y,
-                lsm303dlhc_mag_set_y, NULL, NULL);
+    object_property_add(obj, "mag-y", "int", &int_type_info,
+                        lsm303dlhc_mag_get_y,
+                        lsm303dlhc_mag_set_y, NULL, NULL);
 
-    object_property_add(obj, "mag-z", "int",
-                lsm303dlhc_mag_get_z,
-                lsm303dlhc_mag_set_z, NULL, NULL);
+    object_property_add(obj, "mag-z", "int", &int_type_info,
+                        lsm303dlhc_mag_get_z,
+                        lsm303dlhc_mag_set_z, NULL, NULL);
 
-    object_property_add(obj, "temperature", "int",
-                lsm303dlhc_mag_get_temperature,
-                lsm303dlhc_mag_set_temperature, NULL, NULL);
+    object_property_add(obj, "temperature", "int", &int_type_info,
+                        lsm303dlhc_mag_get_temperature,
+                        lsm303dlhc_mag_set_temperature, NULL, NULL);
 }
 
 /*
  * Set the virtual method pointers (bus state change, tx/rx, etc.).
  */
-static void lsm303dlhc_mag_class_init(ObjectClass *klass, void *data)
+static void lsm303dlhc_mag_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
 
-    dc->reset = lsm303dlhc_mag_reset;
+    device_class_set_legacy_reset(dc, lsm303dlhc_mag_reset);
     dc->vmsd = &vmstate_lsm303dlhc_mag;
     k->event = lsm303dlhc_mag_event;
     k->recv = lsm303dlhc_mag_recv;

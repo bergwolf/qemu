@@ -17,9 +17,6 @@
 #include "libqos/qgraph.h"
 #include "libqos/virtio-blk.h"
 
-/* TODO actually test the results and get rid of this */
-#define qmp_discard_response(...) qobject_unref(qmp(__VA_ARGS__))
-
 #define TEST_IMAGE_SIZE         (64 * 1024 * 1024)
 #define QVIRTIO_BLK_TIMEOUT_US  (30 * 1000 * 1000)
 #define PCI_SLOT_HP             0x06
@@ -33,7 +30,7 @@ typedef struct QVirtioBlkReq {
 } QVirtioBlkReq;
 
 
-#ifdef HOST_WORDS_BIGENDIAN
+#if HOST_BIG_ENDIAN
 const bool host_is_big_endian = true;
 #else
 const bool host_is_big_endian; /* false */
@@ -49,10 +46,10 @@ static void drive_destroy(void *path)
 static char *drive_create(void)
 {
     int fd, ret;
-    char *t_path = g_strdup("/tmp/qtest.XXXXXX");
+    char *t_path;
 
     /* Create a temporary raw image */
-    fd = mkstemp(t_path);
+    fd = g_file_open_tmp("qtest.XXXXXX", &t_path, NULL);
     g_assert_cmpint(fd, >=, 0);
     ret = ftruncate(fd, TEST_IMAGE_SIZE);
     g_assert_cmpint(ret, ==, 0);
@@ -97,6 +94,8 @@ static uint64_t virtio_blk_request(QGuestAllocator *alloc, QVirtioDevice *d,
     case VIRTIO_BLK_T_WRITE_ZEROES:
         g_assert_cmpuint(data_size %
                          sizeof(struct virtio_blk_discard_write_zeroes), ==, 0);
+        break;
+    case VIRTIO_BLK_T_GET_ID:
         break;
     default:
         g_assert_cmpuint(data_size, ==, 0);
@@ -453,9 +452,10 @@ static void config(void *obj, void *data, QGuestAllocator *t_alloc)
 
     qvirtio_set_driver_ok(dev);
 
-    qmp_discard_response("{ 'execute': 'block_resize', "
-                         " 'arguments': { 'device': 'drive0', "
-                         " 'size': %d } }", n_size);
+    qtest_qmp_assert_success(global_qtest,
+                             "{ 'execute': 'block_resize', "
+                             " 'arguments': { 'device': 'drive0', "
+                             " 'size': %d } }", n_size);
     qvirtio_wait_config_isr(dev, QVIRTIO_BLK_TIMEOUT_US);
 
     capacity = qvirtio_config_readq(dev, 0);
@@ -476,13 +476,7 @@ static void msix(void *obj, void *u_data, QGuestAllocator *t_alloc)
     uint32_t free_head;
     uint8_t status;
     char *data;
-    QOSGraphObject *blk_object = obj;
-    QPCIDevice *pci_dev = blk_object->get_driver(blk_object, "pci-device");
     QTestState *qts = global_qtest;
-
-    if (qpci_check_buggy_msi(pci_dev)) {
-        return;
-    }
 
     qpci_msix_enable(pdev->pdev);
     qvirtio_pci_set_msix_configuration_vector(pdev, t_alloc, 0);
@@ -502,9 +496,10 @@ static void msix(void *obj, void *u_data, QGuestAllocator *t_alloc)
 
     qvirtio_set_driver_ok(dev);
 
-    qmp_discard_response("{ 'execute': 'block_resize', "
-                         " 'arguments': { 'device': 'drive0', "
-                         " 'size': %d } }", n_size);
+    qtest_qmp_assert_success(global_qtest,
+                             "{ 'execute': 'block_resize', "
+                             " 'arguments': { 'device': 'drive0', "
+                             " 'size': %d } }", n_size);
 
     qvirtio_wait_config_isr(dev, QVIRTIO_BLK_TIMEOUT_US);
 
@@ -585,13 +580,7 @@ static void idx(void *obj, void *u_data, QGuestAllocator *t_alloc)
     uint32_t desc_idx;
     uint8_t status;
     char *data;
-    QOSGraphObject *blk_object = obj;
-    QPCIDevice *pci_dev = blk_object->get_driver(blk_object, "pci-device");
     QTestState *qts = global_qtest;
-
-    if (qpci_check_buggy_msi(pci_dev)) {
-        return;
-    }
 
     qpci_msix_enable(pdev->pdev);
     qvirtio_pci_set_msix_configuration_vector(pdev, t_alloc, 0);
@@ -701,6 +690,11 @@ static void pci_hotplug(void *obj, void *data, QGuestAllocator *t_alloc)
     QVirtioPCIDevice *dev;
     QTestState *qts = dev1->pdev->bus->qts;
 
+    if (dev1->pdev->bus->not_hotpluggable) {
+        g_test_skip("pci bus does not support hotplug");
+        return;
+    }
+
     /* plug secondary disk */
     qtest_qmp_device_add(qts, "virtio-blk-pci", "drv1",
                          "{'addr': %s, 'drive': 'drive1'}",
@@ -753,9 +747,10 @@ static void resize(void *obj, void *data, QGuestAllocator *t_alloc)
 
     vq = test_basic(dev, t_alloc);
 
-    qmp_discard_response("{ 'execute': 'block_resize', "
-                         " 'arguments': { 'device': 'drive0', "
-                         " 'size': %d } }", n_size);
+    qtest_qmp_assert_success(global_qtest,
+                             "{ 'execute': 'block_resize', "
+                             " 'arguments': { 'device': 'drive0', "
+                             " 'size': %d } }", n_size);
 
     qvirtio_wait_queue_isr(qts, dev, vq, QVIRTIO_BLK_TIMEOUT_US);
 
@@ -764,6 +759,110 @@ static void resize(void *obj, void *data, QGuestAllocator *t_alloc)
 
     qvirtqueue_cleanup(dev->bus, vq, t_alloc);
 
+}
+
+static QVirtQueue *get_id_setup(QVirtioDevice *dev, QGuestAllocator *t_alloc)
+{
+    QVirtQueue *vq;
+    uint64_t features = qvirtio_get_features(dev);
+
+    features = features & (1ull << VIRTIO_F_VERSION_1);
+    qvirtio_set_features(dev, features);
+
+    vq = qvirtqueue_setup(dev, t_alloc, 0);
+    qvirtio_set_driver_ok(dev);
+    return vq;
+}
+
+static uint8_t get_id_request(QVirtioDevice *dev, QVirtQueue *vq,
+                              char *buf, size_t buf_len,
+                              char pattern_byte,
+                              QGuestAllocator *t_alloc)
+{
+    QTestState *qts = global_qtest;
+    uint64_t req_addr;
+    uint32_t free_head;
+    uint8_t status;
+
+    QVirtioBlkReq req = {
+        .type = VIRTIO_BLK_T_GET_ID,
+        .data = buf,
+    };
+
+    req_addr = virtio_blk_request(t_alloc, dev, &req, buf_len);
+
+    memset(req.data, pattern_byte, buf_len);
+    memwrite(req_addr + 16, req.data, buf_len);
+
+    free_head = qvirtqueue_add(qts, vq, req_addr, 16, false, true);
+    qvirtqueue_add(qts, vq, req_addr + 16, buf_len, true, true);
+    qvirtqueue_add(qts, vq, req_addr + 16 + buf_len, 1, true, false);
+
+    qvirtqueue_kick(qts, dev, vq, free_head);
+
+    qvirtio_wait_used_elem(qts, dev, vq, free_head, NULL,
+                           QVIRTIO_BLK_TIMEOUT_US);
+    status = readb(req_addr + 16 + buf_len);
+    memread(req_addr + 16, buf, buf_len);
+
+    guest_free(t_alloc, req_addr);
+
+    return status;
+}
+
+static void get_id_serial_short(void *obj, void *data, QGuestAllocator *t_alloc)
+{
+    QVirtioBlk *blk_if = obj;
+    QVirtioDevice *dev = blk_if->vdev;
+    QVirtQueue *vq;
+    uint8_t status;
+    const char expected[20] = "abc";
+    char buf[20];
+
+    vq = get_id_setup(dev, t_alloc);
+    status = get_id_request(dev, vq, buf, 20, 0xa5, t_alloc);
+    g_assert_cmpint(status, ==, 0);
+    g_assert_cmpmem(buf, 20, expected, sizeof(expected));
+
+    qvirtqueue_cleanup(blk_if->vdev->bus, vq, t_alloc);
+}
+
+static void get_id_serial_short_20_characters(void *obj, void *data,
+                                              QGuestAllocator *t_alloc)
+{
+    QVirtioBlk *blk_if = obj;
+    QVirtioDevice *dev = blk_if->vdev;
+    QVirtQueue *vq;
+    uint8_t status;
+    /* Edge case of a serial with exactly 20 characters: No NUL termination */
+    const char expected[25] = "01234567890123456789\xa5\xa5\xa5\xa5\xa5";
+    char buf[25];
+
+    vq = get_id_setup(dev, t_alloc);
+    status = get_id_request(dev, vq, buf, 25, 0xa5, t_alloc);
+    g_assert_cmpint(status, ==, 0);
+    g_assert_cmpmem(buf, 25, expected, sizeof(expected));
+
+    qvirtqueue_cleanup(blk_if->vdev->bus, vq, t_alloc);
+}
+
+static void get_id_serial_short_trunc(void *obj, void *data,
+                                      QGuestAllocator *t_alloc)
+{
+    QVirtioBlk *blk_if = obj;
+    QVirtioDevice *dev = blk_if->vdev;
+    QVirtQueue *vq;
+    uint8_t status;
+    /* Everything after the 20 character maximum is untouched, no '\0' */
+    const char expected[25] = "01234567890123456789\xa5\xa5\xa5\xa5\xa5";
+    char buf[25];
+
+    vq = get_id_setup(dev, t_alloc);
+    status = get_id_request(dev, vq, buf, 25, 0xa5, t_alloc);
+    g_assert_cmpint(status, ==, 0);
+    g_assert_cmpmem(buf, 25, expected, sizeof(expected));
+
+    qvirtqueue_cleanup(blk_if->vdev->bus, vq, t_alloc);
 }
 
 static void *virtio_blk_test_setup(GString *cmd_line, void *arg)
@@ -797,6 +896,19 @@ static void register_virtio_blk_test(void)
     qos_add_test("nxvirtq", "virtio-blk-pci",
                       test_nonexistent_virtqueue, &opts);
     qos_add_test("hotplug", "virtio-blk-pci", pci_hotplug, &opts);
+
+    /* serial number tests */
+    opts.edge.extra_device_opts = "serial=abc";
+    qos_add_test("get_id/serial_short", "virtio-blk",
+                 get_id_serial_short, &opts);
+
+    opts.edge.extra_device_opts = "serial=01234567890123456789";
+    qos_add_test("get_id/serial_short_20_characters", "virtio-blk",
+                 get_id_serial_short_20_characters, &opts);
+
+    opts.edge.extra_device_opts = "serial=012345678901234567890123456789";
+    qos_add_test("get_id/serial_short_trunc", "virtio-blk",
+                 get_id_serial_short_trunc, &opts);
 }
 
 libqos_init(register_virtio_blk_test);

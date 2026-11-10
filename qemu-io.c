@@ -15,7 +15,8 @@
 #include <termios.h>
 #endif
 
-#include "qemu-common.h"
+#include "qemu/help-texts.h"
+#include "qemu/cutils.h"
 #include "qapi/error.h"
 #include "qemu-io.h"
 #include "qemu/error-report.h"
@@ -26,14 +27,14 @@
 #include "qemu/readline.h"
 #include "qemu/log.h"
 #include "qemu/sockets.h"
-#include "qapi/qmp/qstring.h"
-#include "qapi/qmp/qdict.h"
+#include "qobject/qstring.h"
+#include "qobject/qdict.h"
 #include "qom/object_interfaces.h"
-#include "sysemu/block-backend.h"
+#include "system/block-backend.h"
 #include "block/block_int.h"
 #include "trace/control.h"
 #include "crypto/init.h"
-#include "qemu-version.h"
+#include "qemu/version.h"
 
 #define CMD_NOFILE_OK   0x01
 
@@ -67,7 +68,7 @@ static int get_eof_char(void)
 #endif
 }
 
-static int close_f(BlockBackend *blk, int argc, char **argv)
+static int close_f(BlockBackend *blk, int argc, char **argv, Error **errp)
 {
     blk_unref(qemuio_blk);
     qemuio_blk = NULL;
@@ -139,7 +140,7 @@ static void open_help(void)
 "\n");
 }
 
-static int open_f(BlockBackend *blk, int argc, char **argv);
+static int open_f(BlockBackend *blk, int argc, char **argv, Error **errp);
 
 static const cmdinfo_t open_cmd = {
     .name       = "open",
@@ -163,7 +164,7 @@ static QemuOptsList empty_opts = {
     },
 };
 
-static int open_f(BlockBackend *blk, int argc, char **argv)
+static int open_f(BlockBackend *blk, int argc, char **argv, Error **errp)
 {
     int flags = BDRV_O_UNMAP;
     int readonly = 0;
@@ -267,7 +268,7 @@ static int open_f(BlockBackend *blk, int argc, char **argv)
     return 0;
 }
 
-static int quit_f(BlockBackend *blk, int argc, char **argv)
+static int quit_f(BlockBackend *blk, int argc, char **argv, Error **errp)
 {
     quit_qemu_io = true;
     return 0;
@@ -323,13 +324,13 @@ static char *get_prompt(void)
     static char prompt[FILENAME_MAX + 2 /*"> "*/ + 1 /*"\0"*/ ];
 
     if (!prompt[0]) {
-        snprintf(prompt, sizeof(prompt), "%s> ", error_get_progname());
+        snprintf(prompt, sizeof(prompt), "%s> ", g_get_prgname());
     }
 
     return prompt;
 }
 
-static void GCC_FMT_ATTR(2, 3) readline_printf_func(void *opaque,
+static void G_GNUC_PRINTF(2, 3) readline_printf_func(void *opaque,
                                                     const char *fmt, ...)
 {
     va_list ap;
@@ -413,14 +414,13 @@ static void prep_fetchline(void *opaque)
 
 static int do_qemuio_command(const char *cmd)
 {
+    Error *local_err = NULL;
     int ret;
-    AioContext *ctx =
-        qemuio_blk ? blk_get_aio_context(qemuio_blk) : qemu_get_aio_context();
 
-    aio_context_acquire(ctx);
-    ret = qemuio_command(qemuio_blk, cmd);
-    aio_context_release(ctx);
-
+    ret = qemuio_command(qemuio_blk, cmd, &local_err);
+    if (local_err) {
+        error_report_err(local_err);
+    }
     return ret;
 }
 
@@ -474,10 +474,10 @@ static int command_loop(void)
     return last_error;
 }
 
-static void add_user_command(char *optarg)
+static void add_user_command(char *user_cmd)
 {
     cmdline = g_renew(char *, cmdline, ++ncmdline);
-    cmdline[ncmdline-1] = optarg;
+    cmdline[ncmdline - 1] = user_cmd;
 }
 
 static void reenable_tty_echo(void)
@@ -598,10 +598,10 @@ int main(int argc, char **argv)
             break;
         case 'V':
             printf("%s version " QEMU_FULL_VERSION "\n"
-                   QEMU_COPYRIGHT "\n", error_get_progname());
+                   QEMU_COPYRIGHT "\n", g_get_prgname());
             exit(0);
         case 'h':
-            usage(error_get_progname());
+            usage(g_get_prgname());
             exit(0);
         case 'U':
             force_share = true;
@@ -613,13 +613,13 @@ int main(int argc, char **argv)
             imageOpts = true;
             break;
         default:
-            usage(error_get_progname());
+            usage(g_get_prgname());
             exit(1);
         }
     }
 
     if ((argc - optind) > 1) {
-        usage(error_get_progname());
+        usage(g_get_prgname());
         exit(1);
     }
 
@@ -634,7 +634,7 @@ int main(int argc, char **argv)
         exit(1);
     }
     trace_init_file();
-    qemu_set_log(LOG_TRACE);
+    qemu_set_log(LOG_TRACE, &error_fatal);
 
     /* initialize commands */
     qemuio_add_command(&quit_cmd);

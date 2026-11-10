@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 ##
-##  Copyright(c) 2019-2021 Qualcomm Innovation Center, Inc. All Rights Reserved.
+##  Copyright(c) 2019-2024 Qualcomm Innovation Center, Inc. All Rights Reserved.
 ##
 ##  This program is free software; you can redistribute it and/or modify
 ##  it under the terms of the GNU General Public License as published by
@@ -22,133 +22,6 @@ import re
 import string
 import hex_common
 
-##
-## Helpers for gen_helper_function
-##
-def gen_decl_ea(f):
-    f.write("    uint32_t EA;\n")
-
-def gen_helper_return_type(f,regtype,regid,regno):
-    if regno > 1 : f.write(", ")
-    f.write("int32_t")
-
-def gen_helper_return_type_pair(f,regtype,regid,regno):
-    if regno > 1 : f.write(", ")
-    f.write("int64_t")
-
-def gen_helper_arg(f,regtype,regid,regno):
-    if regno > 0 : f.write(", " )
-    f.write("int32_t %s%sV" % (regtype,regid))
-
-def gen_helper_arg_new(f,regtype,regid,regno):
-    if regno >= 0 : f.write(", " )
-    f.write("int32_t %s%sN" % (regtype,regid))
-
-def gen_helper_arg_pair(f,regtype,regid,regno):
-    if regno >= 0 : f.write(", ")
-    f.write("int64_t %s%sV" % (regtype,regid))
-
-def gen_helper_arg_ext(f,regtype,regid,regno):
-    if regno > 0 : f.write(", ")
-    f.write("void *%s%sV_void" % (regtype,regid))
-
-def gen_helper_arg_ext_pair(f,regtype,regid,regno):
-    if regno > 0 : f.write(", ")
-    f.write("void *%s%sV_void" % (regtype,regid))
-
-def gen_helper_arg_opn(f,regtype,regid,i,tag):
-    if (hex_common.is_pair(regid)):
-        if (hex_common.is_hvx_reg(regtype)):
-            gen_helper_arg_ext_pair(f,regtype,regid,i)
-        else:
-            gen_helper_arg_pair(f,regtype,regid,i)
-    elif (hex_common.is_single(regid)):
-        if hex_common.is_old_val(regtype, regid, tag):
-            if (hex_common.is_hvx_reg(regtype)):
-                gen_helper_arg_ext(f,regtype,regid,i)
-            else:
-                gen_helper_arg(f,regtype,regid,i)
-        elif hex_common.is_new_val(regtype, regid, tag):
-            gen_helper_arg_new(f,regtype,regid,i)
-        else:
-            print("Bad register parse: ",regtype,regid,toss,numregs)
-    else:
-        print("Bad register parse: ",regtype,regid,toss,numregs)
-
-def gen_helper_arg_imm(f,immlett):
-    f.write(", int32_t %s" % (hex_common.imm_name(immlett)))
-
-def gen_helper_dest_decl(f,regtype,regid,regno,subfield=""):
-    f.write("    int32_t %s%sV%s = 0;\n" % \
-        (regtype,regid,subfield))
-
-def gen_helper_dest_decl_pair(f,regtype,regid,regno,subfield=""):
-    f.write("    int64_t %s%sV%s = 0;\n" % \
-        (regtype,regid,subfield))
-
-def gen_helper_dest_decl_ext(f,regtype,regid):
-    if (regtype == "Q"):
-        f.write("    /* %s%sV is *(MMQReg *)(%s%sV_void) */\n" % \
-            (regtype,regid,regtype,regid))
-    else:
-        f.write("    /* %s%sV is *(MMVector *)(%s%sV_void) */\n" % \
-            (regtype,regid,regtype,regid))
-
-def gen_helper_dest_decl_ext_pair(f,regtype,regid,regno):
-    f.write("    /* %s%sV is *(MMVectorPair *))%s%sV_void) */\n" % \
-        (regtype,regid,regtype, regid))
-
-def gen_helper_dest_decl_opn(f,regtype,regid,i):
-    if (hex_common.is_pair(regid)):
-        if (hex_common.is_hvx_reg(regtype)):
-            gen_helper_dest_decl_ext_pair(f,regtype,regid, i)
-        else:
-            gen_helper_dest_decl_pair(f,regtype,regid,i)
-    elif (hex_common.is_single(regid)):
-        if (hex_common.is_hvx_reg(regtype)):
-            gen_helper_dest_decl_ext(f,regtype,regid)
-        else:
-            gen_helper_dest_decl(f,regtype,regid,i)
-    else:
-        print("Bad register parse: ",regtype,regid,toss,numregs)
-
-def gen_helper_src_var_ext(f,regtype,regid):
-    if (regtype == "Q"):
-       f.write("    /* %s%sV is *(MMQReg *)(%s%sV_void) */\n" % \
-           (regtype,regid,regtype,regid))
-    else:
-       f.write("    /* %s%sV is *(MMVector *)(%s%sV_void) */\n" % \
-           (regtype,regid,regtype,regid))
-
-def gen_helper_src_var_ext_pair(f,regtype,regid,regno):
-    f.write("    /* %s%sV%s is *(MMVectorPair *)(%s%sV%s_void) */\n" % \
-        (regtype,regid,regno,regtype,regid,regno))
-
-def gen_helper_return(f,regtype,regid,regno):
-    f.write("    return %s%sV;\n" % (regtype,regid))
-
-def gen_helper_return_pair(f,regtype,regid,regno):
-    f.write("    return %s%sV;\n" % (regtype,regid))
-
-def gen_helper_dst_write_ext(f,regtype,regid):
-    return
-
-def gen_helper_dst_write_ext_pair(f,regtype,regid):
-    return
-
-def gen_helper_return_opn(f, regtype, regid, i):
-    if (hex_common.is_pair(regid)):
-        if (hex_common.is_hvx_reg(regtype)):
-            gen_helper_dst_write_ext_pair(f,regtype,regid)
-        else:
-            gen_helper_return_pair(f,regtype,regid,i)
-    elif (hex_common.is_single(regid)):
-        if (hex_common.is_hvx_reg(regtype)):
-            gen_helper_dst_write_ext(f,regtype,regid)
-        else:
-            gen_helper_return(f,regtype,regid,i)
-    else:
-        print("Bad register parse: ",regtype,regid,toss,numregs)
 
 ##
 ## Generate the TCG code to call the helper
@@ -156,10 +29,8 @@ def gen_helper_return_opn(f, regtype, regid, i):
 ##     We produce:
 ##       int32_t HELPER(A2_add)(CPUHexagonState *env, int32_t RsV, int32_t RtV)
 ##       {
-##           uint32_t slot __attribute__(unused)) = 4;
 ##           int32_t RdV = 0;
 ##           { RdV=RsV+RtV;}
-##           COUNT_HELPER(A2_add);
 ##           return RdV;
 ##       }
 ##
@@ -167,149 +38,165 @@ def gen_helper_function(f, tag, tagregs, tagimms):
     regs = tagregs[tag]
     imms = tagimms[tag]
 
-    numresults = 0
-    numscalarresults = 0
-    numscalarreadwrite = 0
-    for regtype,regid,toss,numregs in regs:
-        if (hex_common.is_written(regid)):
-            numresults += 1
-            if (hex_common.is_scalar_reg(regtype)):
-                numscalarresults += 1
-        if (hex_common.is_readwrite(regid)):
-            if (hex_common.is_scalar_reg(regtype)):
-                numscalarreadwrite += 1
+    ret_type = hex_common.helper_ret_type(tag, regs).func_arg
 
-    if (numscalarresults > 1):
-        ## The helper is bogus when there is more than one result
-        f.write("void HELPER(%s)(CPUHexagonState *env) { BOGUS_HELPER(%s); }\n"
-                % (tag, tag))
-    else:
-        ## The return type of the function is the type of the destination
-        ## register (if scalar)
-        i=0
-        for regtype,regid,toss,numregs in regs:
-            if (hex_common.is_written(regid)):
-                if (hex_common.is_pair(regid)):
-                    if (hex_common.is_hvx_reg(regtype)):
-                        continue
-                    else:
-                        gen_helper_return_type_pair(f,regtype,regid,i)
-                elif (hex_common.is_single(regid)):
-                    if (hex_common.is_hvx_reg(regtype)):
-                            continue
-                    else:
-                        gen_helper_return_type(f,regtype,regid,i)
+    declared = []
+    for arg in hex_common.helper_args(tag, regs, imms):
+        declared.append(arg.func_arg)
+
+    ## A helper with no arguments needs (void) to be a prototype
+    arguments = ", ".join(declared) or "void"
+    f.write(f"{ret_type} HELPER({tag})({arguments})\n")
+    f.write("{\n")
+    if hex_common.need_ea(tag):
+        f.write(hex_common.code_fmt(f"""\
+            uint32_t EA;
+        """))
+    ## Declare the return variable
+    if not hex_common.is_predicated(tag):
+        for regtype, regid in regs:
+            reg = hex_common.get_register(tag, regtype, regid)
+            is_vector = reg.is_hvx_reg() or reg.is_hlx_reg()
+            if reg.is_writeonly() and not is_vector:
+                f.write(hex_common.code_fmt(f"""\
+                    {reg.helper_arg_type()} {reg.helper_arg_name()} = 0;
+                """))
+
+    ## Print useful information about HVX and HLX registers.
+    for regtype, regid in regs:
+        reg = hex_common.get_register(tag, regtype, regid)
+        if reg.is_hvx_reg():
+            reg.helper_hvx_desc(f)
+        if reg.is_hlx_reg():
+            reg.helper_hlx_desc(f)
+
+    if hex_common.need_slot(tag):
+        if "A_LOAD" in hex_common.attribdict[tag]:
+            f.write(hex_common.code_fmt(f"""\
+                bool pkt_has_scalar_store_s1 __attribute__((unused)) = \
+                    slotval & 0x1;
+            """))
+        f.write(hex_common.code_fmt(f"""\
+            uint32_t slot __attribute__((unused)) = slotval >> 1;
+        """))
+
+    if "A_FPOP" in hex_common.attribdict[tag]:
+        f.write(hex_common.code_fmt(f"""\
+            arch_fpop_start(env);
+        """))
+
+    ## Define HLX register variables.
+    has_hlx_reg = False
+    for regtype, regid in regs:
+        reg = hex_common.get_register(tag, regtype, regid)
+        if reg.is_hlx_reg():
+            has_hlx_reg = True
+            if reg.is_pair():
+                tmp_name = f"_{reg.reg_tcg()}_tmp"
+                f.write(hex_common.code_fmt(f"""\
+                    HLXVectorPair {tmp_name};
+                """))
+                if reg.is_read():
+                    f.write(hex_common.code_fmt(f"""\
+                        hlx_interleave_pair(&{tmp_name},
+                            (const HLXVector *)({reg.helper_arg_name()}),
+                            (const HLXVector *)({reg.helper_arg_name()}) + 1);
+                    """))
                 else:
-                    print("Bad register parse: ",regtype,regid,toss,numregs)
-            i += 1
+                    f.write(hex_common.code_fmt(f"""\
+                        memset(&{tmp_name}, 0, sizeof({tmp_name}));
+                    """))
+                f.write(hex_common.code_fmt(f"""\
+                    #define {reg.reg_tcg()} {tmp_name}
+                """))
+            else:
+                reg_def = f"(*(HLXVector *)({reg.helper_arg_name()}))"
+                f.write(hex_common.code_fmt(f"""\
+                    #define {reg.reg_tcg()} {reg_def}
+                """))
 
-        if (numscalarresults == 0):
-            f.write("void")
-        f.write(" HELPER(%s)(CPUHexagonState *env" % tag)
+    ## Declare fLVFOREACH loop variables.
+    semantics = hex_common.semdict[tag]
+    if has_hlx_reg and "fLVFOREACH" in semantics:
+        f.write(hex_common.code_fmt(f"""\
+            int i;
+        """))
+        # Remove nested fHIDE() wrappers.
+        while 'fHIDE(' in semantics:
+            # Find the matching closing parenthesis.
+            start = semantics.find('fHIDE(')
+            paren_count = 0
+            end = -1
+            for pos in range(start + len('fHIDE('), len(semantics)):
+                if semantics[pos] == '(':
+                    paren_count += 1
+                elif semantics[pos] == ')':
+                    if paren_count == 0:
+                        end = pos
+                        break
+                    paren_count -= 1
+            if end < 0:
+                raise Exception(f"unbalanced fHIDE( in {tag}")
+            semantics = semantics[:start] + semantics[end + 1:]
 
-        ## Arguments include the vector destination operands
-        i = 1
-        for regtype,regid,toss,numregs in regs:
-            if (hex_common.is_written(regid)):
-                if (hex_common.is_pair(regid)):
-                    if (hex_common.is_hvx_reg(regtype)):
-                        gen_helper_arg_ext_pair(f,regtype,regid,i)
-                    else:
-                        continue
-                elif (hex_common.is_single(regid)):
-                    if (hex_common.is_hvx_reg(regtype)):
-                        gen_helper_arg_ext(f,regtype,regid,i)
-                    else:
-                        # This is the return value of the function
-                        continue
-                else:
-                    print("Bad register parse: ",regtype,regid,toss,numregs)
-                i += 1
+    f.write(hex_common.code_fmt(f"""\
+        {semantics};
+    """))
 
-        ## Arguments to the helper function are the source regs and immediates
-        for regtype,regid,toss,numregs in regs:
-            if (hex_common.is_read(regid)):
-                if (hex_common.is_hvx_reg(regtype) and
-                    hex_common.is_readwrite(regid)):
-                    continue
-                gen_helper_arg_opn(f,regtype,regid,i,tag)
-                i += 1
-        for immlett,bits,immshift in imms:
-            gen_helper_arg_imm(f,immlett)
-            i += 1
+    ## Undefine HLX registers and deinterleave written pairs.
+    for regtype, regid in regs:
+        reg = hex_common.get_register(tag, regtype, regid)
+        if reg.is_hlx_reg():
+            if reg.is_pair() and reg.is_written():
+                tmp_name = f"_{reg.reg_tcg()}_tmp"
+                f.write(hex_common.code_fmt(f"""\
+                    hlx_deinterleave_pair(
+                        (HLXVector *)({reg.helper_arg_name()}),
+                        (HLXVector *)({reg.helper_arg_name()}) + 1,
+                        &{tmp_name});
+                """))
+            f.write(hex_common.code_fmt(f"""\
+                #undef {reg.reg_tcg()}
+            """))
 
-        if hex_common.need_slot(tag):
-            if i > 0: f.write(", ")
-            f.write("uint32_t slot")
-            i += 1
-        if hex_common.need_part1(tag):
-            if i > 0: f.write(", ")
-            f.write("uint32_t part1")
-        f.write(")\n{\n")
-        if (not hex_common.need_slot(tag)):
-            f.write("    uint32_t slot __attribute__((unused)) = 4;\n" )
-        if hex_common.need_ea(tag): gen_decl_ea(f)
-        ## Declare the return variable
-        i=0
-        for regtype,regid,toss,numregs in regs:
-            if (hex_common.is_writeonly(regid)):
-                gen_helper_dest_decl_opn(f,regtype,regid,i)
-            i += 1
+    ## Return the scalar result
+    for regtype, regid in regs:
+        reg = hex_common.get_register(tag, regtype, regid)
+        if reg.is_written() and not reg.is_hvx_reg() and not reg.is_hlx_reg():
+            f.write(hex_common.code_fmt(f"""\
+                return {reg.helper_arg_name()};
+            """))
 
-        for regtype,regid,toss,numregs in regs:
-            if (hex_common.is_read(regid)):
-                if (hex_common.is_pair(regid)):
-                    if (hex_common.is_hvx_reg(regtype)):
-                        gen_helper_src_var_ext_pair(f,regtype,regid,i)
-                elif (hex_common.is_single(regid)):
-                    if (hex_common.is_hvx_reg(regtype)):
-                        gen_helper_src_var_ext(f,regtype,regid)
-                else:
-                    print("Bad register parse: ",regtype,regid,toss,numregs)
+    f.write("}\n\n")
+    ## End of the helper definition
 
-        if 'A_FPOP' in hex_common.attribdict[tag]:
-            f.write('    arch_fpop_start(env);\n');
-
-        f.write("    %s\n" % hex_common.semdict[tag])
-
-        if 'A_FPOP' in hex_common.attribdict[tag]:
-            f.write('    arch_fpop_end(env);\n');
-
-        ## Save/return the return variable
-        for regtype,regid,toss,numregs in regs:
-            if (hex_common.is_written(regid)):
-                gen_helper_return_opn(f, regtype, regid, i)
-        f.write("}\n\n")
-        ## End of the helper definition
 
 def main():
-    hex_common.read_semantics_file(sys.argv[1])
-    hex_common.read_attribs_file(sys.argv[2])
-    hex_common.read_overrides_file(sys.argv[3])
-    hex_common.read_overrides_file(sys.argv[4])
-    hex_common.calculate_attribs()
+    args = hex_common.parse_common_args(
+        "Emit helper function definitions for each instruction"
+    )
     tagregs = hex_common.get_tagregs()
     tagimms = hex_common.get_tagimms()
 
-    with open(sys.argv[5], 'w') as f:
-        for tag in hex_common.tags:
-            ## Skip the priv instructions
-            if ( "A_PRIV" in hex_common.attribdict[tag] ) :
+    with open(args.out, "w") as f:
+        for tag in hex_common.get_user_tags():
+            if hex_common.tag_ignore(tag):
                 continue
-            ## Skip the guest instructions
-            if ( "A_GUEST" in hex_common.attribdict[tag] ) :
+            if hex_common.skip_qemu_helper(tag):
                 continue
-            ## Skip the diag instructions
-            if ( tag == "Y6_diag" ) :
+            if hex_common.is_idef_parser_enabled(tag):
                 continue
-            if ( tag == "Y6_diag0" ) :
-                continue
-            if ( tag == "Y6_diag1" ) :
-                continue
-            if ( hex_common.skip_qemu_helper(tag) ):
-                continue
-
             gen_helper_function(f, tag, tagregs, tagimms)
+
+        f.write("#if !defined(CONFIG_USER_ONLY)\n")
+        for tag in hex_common.get_sys_tags():
+            if hex_common.skip_qemu_helper(tag):
+                continue
+            if hex_common.is_idef_parser_enabled(tag):
+                continue
+            gen_helper_function(f, tag, tagregs, tagimms)
+        f.write("#endif\n")
+
 
 if __name__ == "__main__":
     main()

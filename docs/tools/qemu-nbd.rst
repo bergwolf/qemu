@@ -1,3 +1,5 @@
+.. _qemu-nbd:
+
 =====================================
 QEMU Disk Network Block Device Server
 =====================================
@@ -27,7 +29,7 @@ Options
 .. program:: qemu-nbd
 
 *filename* is a disk image filename, or a set of block
-driver options if ``--image-opts`` is specified.
+driver options if :option:`--image-opts` is specified.
 
 *dev* is an NBD device.
 
@@ -81,9 +83,15 @@ driver options if ``--image-opts`` is specified.
 
 .. option:: -B, --bitmap=NAME
 
-  If *filename* has a qcow2 persistent bitmap *NAME*, expose
-  that bitmap via the ``qemu:dirty-bitmap:NAME`` metadata context
-  accessible through NBD_OPT_SET_META_CONTEXT.
+  If *filename* has a persistent bitmap *NAME* (possibly via a backing
+  chain), expose that bitmap via the ``qemu:dirty-bitmap:NAME`` metadata
+  context accessible through NBD_OPT_SET_META_CONTEXT.
+
+.. option:: --all-bitmaps
+
+  If *filename* has any persistent bitmaps (possibly via a backing
+  chain), expose one ``qemu:dirty-bitmap:NAME`` metadata context per
+  bitmap, accessible through NBD_OPT_SET_META_CONTEXT.
 
 .. option:: -s, --snapshot
 
@@ -93,9 +101,10 @@ driver options if ``--image-opts`` is specified.
 
 .. option:: -l, --load-snapshot=SNAPSHOT_PARAM
 
-  Load an internal snapshot inside *filename* and export it
-  as an read-only device, SNAPSHOT_PARAM format is
-  ``snapshot.id=[ID],snapshot.name=[NAME]`` or ``[ID_OR_NAME]``
+  Load an internal snapshot inside *filename* and export it.
+  SNAPSHOT_PARAM format is ``snapshot.id=[ID],snapshot.name=[NAME]``
+  or ``[ID_OR_NAME]``. The export is read-only unless ``-s`` is also
+  in use.
 
 .. option:: --cache=CACHE
 
@@ -139,8 +148,7 @@ driver options if ``--image-opts`` is specified.
 .. option:: -e, --shared=NUM
 
   Allow up to *NUM* clients to share the device (default
-  ``1``), 0 for unlimited. Safe for readers, but for now,
-  consistency is not guaranteed between multiple writers.
+  ``1``), 0 for unlimited.
 
 .. option:: -t, --persistent
 
@@ -155,6 +163,11 @@ driver options if ``--image-opts`` is specified.
   Set the NBD volume export description, as a human-readable
   string.
 
+.. option:: --handshake-limit=N
+
+  Set the timeout for a client to successfully complete its handshake
+  to N seconds (default 10), or 0 for no limit.
+
 .. option:: -L, --list
 
   Connect as a client and list all details about the exports exposed by
@@ -165,9 +178,22 @@ driver options if ``--image-opts`` is specified.
 .. option:: --tls-creds=ID
 
   Enable mandatory TLS encryption for the server by setting the ID
-  of the TLS credentials object previously created with the --object
-  option; or provide the credentials needed for connecting as a client
-  in list mode.
+  of the TLS credentials object previously created with the
+  :option:`--object` option; or provide the credentials needed for
+  connecting as a client in list mode.
+
+.. option:: --tls-hostname=hostname
+
+  When validating an x509 certificate received over a TLS connection,
+  the hostname that the NBD client used to connect will be checked
+  against information in the server provided certificate. Sometimes
+  it might be required to override the hostname used to perform this
+  check. For example, if the NBD client is using a tunnel from localhost
+  to connect to the remote server, the :option:`--tls-hostname` option should
+  be used to set the officially expected hostname of the remote NBD
+  server. This can also be used if accessing NBD over a UNIX socket
+  where there is no inherent hostname available. This is only permitted
+  when acting as a NBD client with the :option:`--list` option.
 
 .. option:: --fork
 
@@ -185,7 +211,9 @@ driver options if ``--image-opts`` is specified.
 
 .. option:: -v, --verbose
 
-  Display extra debugging information.
+  Display extra debugging information. This option also keeps the original
+  *STDERR* stream open if the ``qemu-nbd`` process is daemonized due to
+  other options like :option:`--fork` or :option:`-c`.
 
 .. option:: -h, --help
 
@@ -213,7 +241,7 @@ disconnects:
   qemu-nbd -f qcow2 file.qcow2
 
 Start a long-running server listening with encryption on port 10810,
-and whitelist clients with a specific X.509 certificate to connect to
+and allow clients with a specific X.509 certificate to connect to
 a 1 megabyte subset of a raw file, using the export name 'subset':
 
 ::

@@ -11,15 +11,9 @@
 #include "trace/control.h"
 
 
-void trace_event_set_state_dynamic_init(TraceEvent *ev, bool state)
-{
-    trace_event_set_state_dynamic(ev, state);
-}
-
 void trace_event_set_state_dynamic(TraceEvent *ev, bool state)
 {
     bool state_pre;
-    assert(trace_event_get_state_static(ev));
 
     /*
      * We ignore the "vcpu" property here, since there's no target code. Then
@@ -35,17 +29,4 @@ void trace_event_set_state_dynamic(TraceEvent *ev, bool state)
             *(ev->dstate) = 0;
         }
     }
-}
-
-void trace_event_set_vcpu_state_dynamic(CPUState *vcpu,
-                                        TraceEvent *ev, bool state)
-{
-    /* should never be called on non-target binaries */
-    abort();
-}
-
-void trace_init_vcpu(CPUState *vcpu)
-{
-    /* should never be called on non-target binaries */
-    abort();
 }

@@ -13,35 +13,32 @@
 
 #include "qemu/osdep.h"
 #include "exec/memop.h"
-#include "exec/memory-internal.h"
-#include "qemu/error-report.h"
-#include "sysemu/hw_accel.h"
+#include "exec/target_page.h"
+#include "system/memory.h"
+#include "qemu/bswap.h"
+#include "qemu/log.h"
+#include "system/hw_accel.h"
+#include "hw/core/boards.h"
+#include "hw/pci/pci_device.h"
 #include "hw/s390x/s390-pci-inst.h"
 #include "hw/s390x/s390-pci-bus.h"
+#include "hw/s390x/s390-pci-kvm.h"
+#include "hw/s390x/s390-pci-vfio.h"
 #include "hw/s390x/tod.h"
 
-#ifndef DEBUG_S390PCI_INST
-#define DEBUG_S390PCI_INST  0
-#endif
+#include "trace.h"
 
-#define DPRINTF(fmt, ...)                                          \
-    do {                                                           \
-        if (DEBUG_S390PCI_INST) {                                  \
-            fprintf(stderr, "s390pci-inst: " fmt, ## __VA_ARGS__); \
-        }                                                          \
-    } while (0)
-
-static inline void inc_dma_avail(S390PCIIOMMU *iommu)
+static inline void inc_dma_avail(S390PCIBusDevice *pbdev)
 {
-    if (iommu->dma_limit) {
-        iommu->dma_limit->avail++;
+    if (pbdev->dma_limit) {
+        pbdev->dma_limit->avail++;
     }
 }
 
-static inline void dec_dma_avail(S390PCIIOMMU *iommu)
+static inline void dec_dma_avail(S390PCIBusDevice *pbdev)
 {
-    if (iommu->dma_limit) {
-        iommu->dma_limit->avail--;
+    if (pbdev->dma_limit) {
+        pbdev->dma_limit->avail--;
     }
 }
 
@@ -61,26 +58,26 @@ static int list_pci(ClpReqRspListPci *rrb, uint8_t *cc)
     uint64_t resume_token;
 
     rc = 0;
-    if (lduw_p(&rrb->request.hdr.len) != 32) {
+    if (lduw_be_p(&rrb->request.hdr.len) != 32) {
         res_code = CLP_RC_LEN;
         rc = -EINVAL;
         goto out;
     }
 
-    if ((ldl_p(&rrb->request.fmt) & CLP_MASK_FMT) != 0) {
+    if ((ldl_be_p(&rrb->request.fmt) & CLP_MASK_FMT) != 0) {
         res_code = CLP_RC_FMT;
         rc = -EINVAL;
         goto out;
     }
 
-    if ((ldl_p(&rrb->request.fmt) & ~CLP_MASK_FMT) != 0 ||
-        ldq_p(&rrb->request.reserved1) != 0) {
+    if ((ldl_be_p(&rrb->request.fmt) & ~CLP_MASK_FMT) != 0 ||
+        ldq_be_p(&rrb->request.reserved1) != 0) {
         res_code = CLP_RC_RESNOT0;
         rc = -EINVAL;
         goto out;
     }
 
-    resume_token = ldq_p(&rrb->request.resume_token);
+    resume_token = ldq_be_p(&rrb->request.resume_token);
 
     if (resume_token) {
         pbdev = s390_pci_find_dev_by_idx(s, resume_token);
@@ -93,13 +90,13 @@ static int list_pci(ClpReqRspListPci *rrb, uint8_t *cc)
         pbdev = s390_pci_find_next_avail_dev(s, NULL);
     }
 
-    if (lduw_p(&rrb->response.hdr.len) < 48) {
+    if (lduw_be_p(&rrb->response.hdr.len) < 48) {
         res_code = CLP_RC_8K;
         rc = -EINVAL;
         goto out;
     }
 
-    initial_l2 = lduw_p(&rrb->response.hdr.len);
+    initial_l2 = lduw_be_p(&rrb->response.hdr.len);
     if ((initial_l2 - LIST_PCI_HDR_LEN) % sizeof(ClpFhListEntry)
         != 0) {
         res_code = CLP_RC_LEN;
@@ -108,34 +105,33 @@ static int list_pci(ClpReqRspListPci *rrb, uint8_t *cc)
         goto out;
     }
 
-    stl_p(&rrb->response.fmt, 0);
-    stq_p(&rrb->response.reserved1, 0);
-    stl_p(&rrb->response.mdd, FH_MASK_SHM);
-    stw_p(&rrb->response.max_fn, PCI_MAX_FUNCTIONS);
+    stl_be_p(&rrb->response.fmt, 0);
+    stq_be_p(&rrb->response.reserved1, 0);
+    stl_be_p(&rrb->response.mdd, FH_MASK_SHM);
+    stw_be_p(&rrb->response.max_fn, PCI_MAX_FUNCTIONS);
     rrb->response.flags = UID_CHECKING_ENABLED;
     rrb->response.entry_size = sizeof(ClpFhListEntry);
 
     i = 0;
     g_l2 = LIST_PCI_HDR_LEN;
     while (g_l2 < initial_l2 && pbdev) {
-        stw_p(&rrb->response.fh_list[i].device_id,
+        stw_be_p(&rrb->response.fh_list[i].device_id,
             pci_get_word(pbdev->pdev->config + PCI_DEVICE_ID));
-        stw_p(&rrb->response.fh_list[i].vendor_id,
+        stw_be_p(&rrb->response.fh_list[i].vendor_id,
             pci_get_word(pbdev->pdev->config + PCI_VENDOR_ID));
         /* Ignore RESERVED devices. */
-        stl_p(&rrb->response.fh_list[i].config,
+        stl_be_p(&rrb->response.fh_list[i].config,
             pbdev->state == ZPCI_FS_STANDBY ? 0 : 1 << 31);
-        stl_p(&rrb->response.fh_list[i].fid, pbdev->fid);
-        stl_p(&rrb->response.fh_list[i].fh, pbdev->fh);
+        stl_be_p(&rrb->response.fh_list[i].fid, pbdev->fid);
+        stl_be_p(&rrb->response.fh_list[i].fh, pbdev->fh);
 
         g_l2 += sizeof(ClpFhListEntry);
         /* Add endian check for DPRINTF? */
-        DPRINTF("g_l2 %d vendor id 0x%x device id 0x%x fid 0x%x fh 0x%x\n",
-                g_l2,
-                lduw_p(&rrb->response.fh_list[i].vendor_id),
-                lduw_p(&rrb->response.fh_list[i].device_id),
-                ldl_p(&rrb->response.fh_list[i].fid),
-                ldl_p(&rrb->response.fh_list[i].fh));
+        trace_s390_pci_list_entry(g_l2,
+                lduw_be_p(&rrb->response.fh_list[i].vendor_id),
+                lduw_be_p(&rrb->response.fh_list[i].device_id),
+                ldl_be_p(&rrb->response.fh_list[i].fid),
+                ldl_be_p(&rrb->response.fh_list[i].fh));
         pbdev = s390_pci_find_next_avail_dev(s, pbdev);
         i++;
     }
@@ -145,13 +141,13 @@ static int list_pci(ClpReqRspListPci *rrb, uint8_t *cc)
     } else {
         resume_token = pbdev->fh & FH_MASK_INDEX;
     }
-    stq_p(&rrb->response.resume_token, resume_token);
-    stw_p(&rrb->response.hdr.len, g_l2);
-    stw_p(&rrb->response.hdr.rsp, CLP_RC_OK);
+    stq_be_p(&rrb->response.resume_token, resume_token);
+    stw_be_p(&rrb->response.hdr.len, g_l2);
+    stw_be_p(&rrb->response.hdr.rsp, CLP_RC_OK);
 out:
     if (rc) {
-        DPRINTF("list pci failed rc 0x%x\n", rc);
-        stw_p(&rrb->response.hdr.rsp, res_code);
+        trace_s390_pci_list(rc);
+        stw_be_p(&rrb->response.hdr.rsp, res_code);
     }
     return rc;
 }
@@ -179,7 +175,7 @@ int clp_service_call(S390CPU *cpu, uint8_t r2, uintptr_t ra)
         return 0;
     }
     reqh = (ClpReqHdr *)buffer;
-    req_len = lduw_p(&reqh->len);
+    req_len = lduw_be_p(&reqh->len);
     if (req_len < 16 || req_len > 8184 || (req_len % 8 != 0)) {
         s390_program_interrupt(env, PGM_OPERAND, ra);
         return 0;
@@ -191,7 +187,7 @@ int clp_service_call(S390CPU *cpu, uint8_t r2, uintptr_t ra)
         return 0;
     }
     resh = (ClpRspHdr *)(buffer + req_len);
-    res_len = lduw_p(&resh->len);
+    res_len = lduw_be_p(&resh->len);
     if (res_len < 8 || res_len > 8176 || (res_len % 8 != 0)) {
         s390_program_interrupt(env, PGM_OPERAND, ra);
         return 0;
@@ -208,11 +204,11 @@ int clp_service_call(S390CPU *cpu, uint8_t r2, uintptr_t ra)
     }
 
     if (req_len != 32) {
-        stw_p(&resh->rsp, CLP_RC_LEN);
+        stw_be_p(&resh->rsp, CLP_RC_LEN);
         goto out;
     }
 
-    switch (lduw_p(&reqh->cmd)) {
+    switch (lduw_be_p(&reqh->cmd)) {
     case CLP_LIST_PCI: {
         ClpReqRspListPci *rrb = (ClpReqRspListPci *)buffer;
         list_pci(rrb, &cc);
@@ -222,9 +218,9 @@ int clp_service_call(S390CPU *cpu, uint8_t r2, uintptr_t ra)
         ClpReqSetPci *reqsetpci = (ClpReqSetPci *)reqh;
         ClpRspSetPci *ressetpci = (ClpRspSetPci *)resh;
 
-        pbdev = s390_pci_find_dev_by_fh(s, ldl_p(&reqsetpci->fh));
+        pbdev = s390_pci_find_dev_by_fh(s, ldl_be_p(&reqsetpci->fh));
         if (!pbdev) {
-                stw_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_FH);
+                stw_be_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_FH);
                 goto out;
         }
 
@@ -232,39 +228,53 @@ int clp_service_call(S390CPU *cpu, uint8_t r2, uintptr_t ra)
         case CLP_SET_ENABLE_PCI_FN:
             switch (reqsetpci->ndas) {
             case 0:
-                stw_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_DMAAS);
+                stw_be_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_DMAAS);
                 goto out;
             case 1:
                 break;
             default:
-                stw_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_RES);
+                stw_be_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_RES);
                 goto out;
             }
 
             if (pbdev->fh & FH_MASK_ENABLE) {
-                stw_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_FHOP);
+                stw_be_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_FHOP);
                 goto out;
             }
 
+            /*
+             * Take this opportunity to make sure we still have an accurate
+             * host fh.  It's possible part of the handle changed while the
+             * device was disabled to the guest (e.g. vfio hot reset for
+             * ISM during plug)
+             */
+            if (pbdev->interp) {
+                /* Take this opportunity to make sure we are sync'd with host */
+                if (!s390_pci_get_host_fh(pbdev, &pbdev->fh) ||
+                    !(pbdev->fh & FH_MASK_ENABLE)) {
+                    stw_be_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_FH);
+                    goto out;
+                }
+            }
             pbdev->fh |= FH_MASK_ENABLE;
             pbdev->state = ZPCI_FS_ENABLED;
-            stl_p(&ressetpci->fh, pbdev->fh);
-            stw_p(&ressetpci->hdr.rsp, CLP_RC_OK);
+            stl_be_p(&ressetpci->fh, pbdev->fh);
+            stw_be_p(&ressetpci->hdr.rsp, CLP_RC_OK);
             break;
         case CLP_SET_DISABLE_PCI_FN:
             if (!(pbdev->fh & FH_MASK_ENABLE)) {
-                stw_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_FHOP);
+                stw_be_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_FHOP);
                 goto out;
             }
-            device_legacy_reset(DEVICE(pbdev));
+            device_cold_reset(DEVICE(pbdev));
             pbdev->fh &= ~FH_MASK_ENABLE;
             pbdev->state = ZPCI_FS_DISABLED;
-            stl_p(&ressetpci->fh, pbdev->fh);
-            stw_p(&ressetpci->hdr.rsp, CLP_RC_OK);
+            stl_be_p(&ressetpci->fh, pbdev->fh);
+            stw_be_p(&ressetpci->hdr.rsp, CLP_RC_OK);
             break;
         default:
-            DPRINTF("unknown set pci command\n");
-            stw_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_FHOP);
+            trace_s390_pci_unknown("set-pci", reqsetpci->oc);
+            stw_be_p(&ressetpci->hdr.rsp, CLP_RC_SETPCIFN_FHOP);
             break;
         }
         break;
@@ -273,23 +283,23 @@ int clp_service_call(S390CPU *cpu, uint8_t r2, uintptr_t ra)
         ClpReqQueryPci *reqquery = (ClpReqQueryPci *)reqh;
         ClpRspQueryPci *resquery = (ClpRspQueryPci *)resh;
 
-        pbdev = s390_pci_find_dev_by_fh(s, ldl_p(&reqquery->fh));
+        pbdev = s390_pci_find_dev_by_fh(s, ldl_be_p(&reqquery->fh));
         if (!pbdev) {
-            DPRINTF("query pci no pci dev\n");
-            stw_p(&resquery->hdr.rsp, CLP_RC_SETPCIFN_FH);
+            trace_s390_pci_nodev("query", ldl_be_p(&reqquery->fh));
+            stw_be_p(&resquery->hdr.rsp, CLP_RC_SETPCIFN_FH);
             goto out;
         }
 
-        stq_p(&resquery->sdma, pbdev->zpci_fn.sdma);
-        stq_p(&resquery->edma, pbdev->zpci_fn.edma);
-        stw_p(&resquery->pchid, pbdev->zpci_fn.pchid);
-        stw_p(&resquery->vfn, pbdev->zpci_fn.vfn);
+        stq_be_p(&resquery->sdma, pbdev->zpci_fn.sdma);
+        stq_be_p(&resquery->edma, pbdev->zpci_fn.edma);
+        stw_be_p(&resquery->pchid, pbdev->zpci_fn.pchid);
+        stw_be_p(&resquery->vfn, pbdev->zpci_fn.vfn);
         resquery->flags = pbdev->zpci_fn.flags;
         resquery->pfgid = pbdev->zpci_fn.pfgid;
         resquery->pft = pbdev->zpci_fn.pft;
         resquery->fmbl = pbdev->zpci_fn.fmbl;
-        stl_p(&resquery->fid, pbdev->zpci_fn.fid);
-        stl_p(&resquery->uid, pbdev->zpci_fn.uid);
+        stl_be_p(&resquery->fid, pbdev->zpci_fn.fid);
+        stl_be_p(&resquery->uid, pbdev->zpci_fn.uid);
         memcpy(resquery->pfip, pbdev->zpci_fn.pfip, CLP_PFIP_NR_SEGMENTS);
         memcpy(resquery->util_str, pbdev->zpci_fn.util_str, CLP_UTIL_STR_LEN);
 
@@ -297,16 +307,16 @@ int clp_service_call(S390CPU *cpu, uint8_t r2, uintptr_t ra)
             uint32_t data = pci_get_long(pbdev->pdev->config +
                 PCI_BASE_ADDRESS_0 + (i * 4));
 
-            stl_p(&resquery->bar[i], data);
+            stl_le_p(&resquery->bar[i], data);
             resquery->bar_size[i] = pbdev->pdev->io_regions[i].size ?
                                     ctz64(pbdev->pdev->io_regions[i].size) : 0;
-            DPRINTF("bar %d addr 0x%x size 0x%" PRIx64 "barsize 0x%x\n", i,
-                    ldl_p(&resquery->bar[i]),
+            trace_s390_pci_bar(i,
+                    ldl_be_p(&resquery->bar[i]),
                     pbdev->pdev->io_regions[i].size,
                     resquery->bar_size[i]);
         }
 
-        stw_p(&resquery->hdr.rsp, CLP_RC_OK);
+        stw_be_p(&resquery->hdr.rsp, CLP_RC_OK);
         break;
     }
     case CLP_QUERY_PCI_FNGRP: {
@@ -319,23 +329,23 @@ int clp_service_call(S390CPU *cpu, uint8_t r2, uintptr_t ra)
         if (!group) {
             /* We do not allow access to unknown groups */
             /* The group must have been obtained with a vfio device */
-            stw_p(&resgrp->hdr.rsp, CLP_RC_QUERYPCIFG_PFGID);
+            stw_be_p(&resgrp->hdr.rsp, CLP_RC_QUERYPCIFG_PFGID);
             goto out;
         }
         resgrp->fr = group->zpci_group.fr;
-        stq_p(&resgrp->dasm, group->zpci_group.dasm);
-        stq_p(&resgrp->msia, group->zpci_group.msia);
-        stw_p(&resgrp->mui, group->zpci_group.mui);
-        stw_p(&resgrp->i, group->zpci_group.i);
-        stw_p(&resgrp->maxstbl, group->zpci_group.maxstbl);
+        stq_be_p(&resgrp->dasm, group->zpci_group.dasm);
+        stq_be_p(&resgrp->msia, group->zpci_group.msia);
+        stw_be_p(&resgrp->mui, group->zpci_group.mui);
+        stw_be_p(&resgrp->i, group->zpci_group.i);
+        stw_be_p(&resgrp->maxstbl, group->zpci_group.maxstbl);
         resgrp->version = group->zpci_group.version;
         resgrp->dtsm = group->zpci_group.dtsm;
-        stw_p(&resgrp->hdr.rsp, CLP_RC_OK);
+        stw_be_p(&resgrp->hdr.rsp, CLP_RC_OK);
         break;
     }
     default:
-        DPRINTF("unknown clp command\n");
-        stw_p(&resh->rsp, CLP_RC_CMD);
+        trace_s390_pci_unknown("clp", lduw_be_p(&reqh->cmd));
+        stw_be_p(&resh->rsp, CLP_RC_CMD);
         break;
     }
 
@@ -382,13 +392,22 @@ static int zpci_endian_swap(uint64_t *ptr, uint8_t len)
 static MemoryRegion *s390_get_subregion(MemoryRegion *mr, uint64_t offset,
                                         uint8_t len)
 {
+    uint64_t last = offset + len;
     MemoryRegion *subregion;
     uint64_t subregion_size;
 
+    /*
+     * Ensure the region is valid, the calculated address cannot wrap and that
+     * it falls within this region.
+     */
+    if (!mr || offset > last || last > memory_region_size(mr)) {
+        return NULL;
+    }
+
     QTAILQ_FOREACH(subregion, &mr->subregions, subregions_link) {
-        subregion_size = int128_get64(subregion->size);
+        subregion_size = memory_region_size(subregion);
         if ((offset >= subregion->addr) &&
-            (offset + len) <= (subregion->addr + subregion_size)) {
+            (last) <= (subregion->addr + subregion_size)) {
             mr = subregion;
             break;
         }
@@ -403,6 +422,10 @@ static MemTxResult zpci_read_bar(S390PCIBusDevice *pbdev, uint8_t pcias,
 
     mr = pbdev->pdev->io_regions[pcias].memory;
     mr = s390_get_subregion(mr, offset, len);
+    if (!mr) {
+        return MEMTX_ERROR;
+    }
+
     offset -= mr->addr;
     return memory_region_dispatch_read(mr, offset, data,
                                        size_memop(len) | MO_BE,
@@ -442,7 +465,7 @@ int pcilg_service_call(S390CPU *cpu, uint8_t r1, uint8_t r2, uintptr_t ra)
 
     pbdev = s390_pci_find_dev_by_fh(s390_get_phb(), fh);
     if (!pbdev) {
-        DPRINTF("pcilg no pci dev\n");
+        trace_s390_pci_nodev("pcilg", fh);
         setcc(cpu, ZPCI_PCI_LS_INVAL_HANDLE);
         return 0;
     }
@@ -483,7 +506,7 @@ int pcilg_service_call(S390CPU *cpu, uint8_t r1, uint8_t r2, uintptr_t ra)
         }
         break;
     default:
-        DPRINTF("pcilg invalid space\n");
+        trace_s390_pci_invalid("pcilg", fh);
         setcc(cpu, ZPCI_PCI_LS_ERR);
         s390_set_status_code(env, r2, ZPCI_PCI_ST_INVAL_AS);
         return 0;
@@ -503,6 +526,10 @@ static MemTxResult zpci_write_bar(S390PCIBusDevice *pbdev, uint8_t pcias,
 
     mr = pbdev->pdev->io_regions[pcias].memory;
     mr = s390_get_subregion(mr, offset, len);
+    if (!mr) {
+        return MEMTX_ERROR;
+    }
+
     offset -= mr->addr;
     return memory_region_dispatch_write(mr, offset, data,
                                         size_memop(len) | MO_BE,
@@ -542,7 +569,7 @@ int pcistg_service_call(S390CPU *cpu, uint8_t r1, uint8_t r2, uintptr_t ra)
 
     pbdev = s390_pci_find_dev_by_fh(s390_get_phb(), fh);
     if (!pbdev) {
-        DPRINTF("pcistg no pci dev\n");
+        trace_s390_pci_nodev("pcistg", fh);
         setcc(cpu, ZPCI_PCI_LS_INVAL_HANDLE);
         return 0;
     }
@@ -591,7 +618,7 @@ int pcistg_service_call(S390CPU *cpu, uint8_t r1, uint8_t r2, uintptr_t ra)
                                      data, len);
         break;
     default:
-        DPRINTF("pcistg invalid space\n");
+        trace_s390_pci_invalid("pcistg", fh);
         setcc(cpu, ZPCI_PCI_LS_ERR);
         s390_set_status_code(env, r2, ZPCI_PCI_ST_INVAL_AS);
         return 0;
@@ -603,10 +630,10 @@ int pcistg_service_call(S390CPU *cpu, uint8_t r1, uint8_t r2, uintptr_t ra)
     return 0;
 }
 
-static uint32_t s390_pci_update_iotlb(S390PCIIOMMU *iommu,
-                                      S390IOTLBEntry *entry)
+uint32_t s390_pci_update_iotlb(S390PCIBusDevice *pbdev,
+                               S390IOTLBEntry *entry)
 {
-    S390IOTLBEntry *cache = g_hash_table_lookup(iommu->iotlb, &entry->iova);
+    S390IOTLBEntry *cache = g_hash_table_lookup(pbdev->iotlb, &entry->iova);
     IOMMUTLBEvent event = {
         .type = entry->perm ? IOMMU_NOTIFIER_MAP : IOMMU_NOTIFIER_UNMAP,
         .entry = {
@@ -622,10 +649,13 @@ static uint32_t s390_pci_update_iotlb(S390PCIIOMMU *iommu,
         if (!cache) {
             goto out;
         }
-        g_hash_table_remove(iommu->iotlb, &entry->iova);
-        inc_dma_avail(iommu);
+        g_hash_table_remove(pbdev->iotlb, &entry->iova);
+        inc_dma_avail(pbdev);
+        /* Don't notify the iommu yet, maybe we can bundle contiguous unmaps */
+        goto out;
     } else {
         if (cache) {
+            /* valid->valid transitions reuse the DMA slot */
             if (cache->perm == entry->perm &&
                 cache->translated_addr == entry->translated_addr) {
                 goto out;
@@ -633,9 +663,12 @@ static uint32_t s390_pci_update_iotlb(S390PCIIOMMU *iommu,
 
             event.type = IOMMU_NOTIFIER_UNMAP;
             event.entry.perm = IOMMU_NONE;
-            memory_region_notify_iommu(&iommu->iommu_mr, 0, event);
+            memory_region_notify_iommu(&pbdev->iommu_mr, 0, event);
             event.type = IOMMU_NOTIFIER_MAP;
             event.entry.perm = entry->perm;
+        } else {
+            /* invalid->valid transitions consume a new DMA slot */
+            dec_dma_avail(pbdev);
         }
 
         cache = g_new(S390IOTLBEntry, 1);
@@ -643,26 +676,54 @@ static uint32_t s390_pci_update_iotlb(S390PCIIOMMU *iommu,
         cache->translated_addr = entry->translated_addr;
         cache->len = TARGET_PAGE_SIZE;
         cache->perm = entry->perm;
-        g_hash_table_replace(iommu->iotlb, &cache->iova, cache);
-        dec_dma_avail(iommu);
+        g_hash_table_replace(pbdev->iotlb, &cache->iova, cache);
     }
 
-    memory_region_notify_iommu(&iommu->iommu_mr, 0, event);
+    /*
+     * All associated iotlb entries have already been cleared, trigger the
+     * unmaps.
+     */
+    memory_region_notify_iommu(&pbdev->iommu_mr, 0, event);
 
 out:
-    return iommu->dma_limit ? iommu->dma_limit->avail : 1;
+    return pbdev->dma_limit ? pbdev->dma_limit->avail : 1;
+}
+
+static void s390_pci_batch_unmap(S390PCIBusDevice *pbdev, uint64_t iova,
+                                 uint64_t len)
+{
+    uint64_t remain = len, start = iova, end = start + len - 1, mask, size;
+    IOMMUTLBEvent event = {
+        .type = IOMMU_NOTIFIER_UNMAP,
+        .entry = {
+            .target_as = &address_space_memory,
+            .translated_addr = 0,
+            .perm = IOMMU_NONE,
+        },
+    };
+
+    while (remain >= TARGET_PAGE_SIZE) {
+        mask = dma_aligned_pow2_mask(start, end, 64);
+        size = mask + 1;
+        event.entry.iova = start;
+        event.entry.addr_mask = mask;
+        memory_region_notify_iommu(&pbdev->iommu_mr, 0, event);
+        start += size;
+        remain -= size;
+    }
 }
 
 int rpcit_service_call(S390CPU *cpu, uint8_t r1, uint8_t r2, uintptr_t ra)
 {
     CPUS390XState *env = &cpu->env;
+    uint64_t iova, coalesce = 0;
     uint32_t fh;
     uint16_t error = 0;
     S390PCIBusDevice *pbdev;
-    S390PCIIOMMU *iommu;
     S390IOTLBEntry entry;
-    hwaddr start, end;
+    hwaddr start, end, sstart;
     uint32_t dma_avail;
+    bool again;
 
     if (env->psw.mask & PSW_MASK_PSTATE) {
         s390_program_interrupt(env, PGM_PRIVILEGED, ra);
@@ -675,12 +736,12 @@ int rpcit_service_call(S390CPU *cpu, uint8_t r1, uint8_t r2, uintptr_t ra)
     }
 
     fh = env->regs[r1] >> 32;
-    start = env->regs[r2];
+    sstart = start = env->regs[r2];
     end = start + env->regs[r2 + 1];
 
     pbdev = s390_pci_find_dev_by_fh(s390_get_phb(), fh);
     if (!pbdev) {
-        DPRINTF("rpcit no pci dev\n");
+        trace_s390_pci_nodev("rpcit", fh);
         setcc(cpu, ZPCI_PCI_LS_INVAL_HANDLE);
         return 0;
     }
@@ -700,36 +761,76 @@ int rpcit_service_call(S390CPU *cpu, uint8_t r1, uint8_t r2, uintptr_t ra)
         break;
     }
 
-    iommu = pbdev->iommu;
-    if (iommu->dma_limit) {
-        dma_avail = iommu->dma_limit->avail;
+    if (pbdev->dma_limit) {
+        dma_avail = pbdev->dma_limit->avail;
     } else {
         dma_avail = 1;
     }
-    if (!iommu->g_iota) {
+    if (!pbdev->g_iota) {
         error = ERR_EVENT_INVALAS;
         goto err;
     }
 
-    if (end < iommu->pba || start > iommu->pal) {
+    if (end < start || end < pbdev->pba || start > pbdev->pal) {
         error = ERR_EVENT_OORANGE;
         goto err;
     }
+    /*
+     * If the specified range at least partially overlaps the registered
+     * aperture, clamp the request to the aperture and ignore the rest.
+     */
+    sstart = MAX(start, pbdev->pba);
+    end = MIN(end, pbdev->pal + 1);
 
+ retry:
+    start = sstart;
+    again = false;
     while (start < end) {
-        error = s390_guest_io_table_walk(iommu->g_iota, start, &entry);
+        error = s390_guest_io_table_walk(pbdev->g_iota, start, &entry);
         if (error) {
             break;
         }
 
-        start += entry.len;
-        while (entry.iova < start && entry.iova < end &&
-               (dma_avail > 0 || entry.perm == IOMMU_NONE)) {
-            dma_avail = s390_pci_update_iotlb(iommu, &entry);
-            entry.iova += TARGET_PAGE_SIZE;
-            entry.translated_addr += TARGET_PAGE_SIZE;
+        /*
+         * If this is an unmap of a PTE, let's try to coalesce multiple unmaps
+         * into as few notifier events as possible.
+         */
+        if (entry.perm == IOMMU_NONE && entry.len == TARGET_PAGE_SIZE) {
+            if (coalesce == 0) {
+                iova = entry.iova;
+            }
+            coalesce += entry.len;
+        } else if (coalesce > 0) {
+            /* Unleash the coalesced unmap before processing a new map */
+            s390_pci_batch_unmap(pbdev, iova, coalesce);
+            coalesce = 0;
+        }
+
+        /* Advance to next frame boundary if start was not frame-aligned */
+        start = QEMU_ALIGN_UP(start + 1, entry.len);
+        while (entry.iova < start && entry.iova < end) {
+            if (dma_avail > 0 || entry.perm == IOMMU_NONE) {
+                dma_avail = s390_pci_update_iotlb(pbdev, &entry);
+                entry.iova += TARGET_PAGE_SIZE;
+                entry.translated_addr += TARGET_PAGE_SIZE;
+            } else {
+                /*
+                 * We are unable to make a new mapping at this time, continue
+                 * on and hopefully free up more space.  Then attempt another
+                 * pass.
+                 */
+                again = true;
+                break;
+            }
         }
     }
+    if (coalesce) {
+            /* Unleash the coalesced unmap before finishing rpcit */
+            s390_pci_batch_unmap(pbdev, iova, coalesce);
+            coalesce = 0;
+    }
+    if (again && dma_avail > 0)
+        goto retry;
 err:
     if (error) {
         pbdev->state = ZPCI_FS_ERROR;
@@ -780,7 +881,7 @@ int pcistb_service_call(S390CPU *cpu, uint8_t r1, uint8_t r3, uint64_t gaddr,
 
     pbdev = s390_pci_find_dev_by_fh(s390_get_phb(), fh);
     if (!pbdev) {
-        DPRINTF("pcistb no pci dev fh 0x%x\n", fh);
+        trace_s390_pci_nodev("pcistb", fh);
         setcc(cpu, ZPCI_PCI_LS_INVAL_HANDLE);
         return 0;
     }
@@ -796,7 +897,7 @@ int pcistb_service_call(S390CPU *cpu, uint8_t r1, uint8_t r3, uint64_t gaddr,
     }
 
     if (pcias > ZPCI_IO_BAR_MAX) {
-        DPRINTF("pcistb invalid space\n");
+        trace_s390_pci_invalid("pcistb", fh);
         setcc(cpu, ZPCI_PCI_LS_ERR);
         s390_set_status_code(env, r1, ZPCI_PCI_ST_INVAL_AS);
         return 0;
@@ -824,6 +925,11 @@ int pcistb_service_call(S390CPU *cpu, uint8_t r1, uint8_t r3, uint64_t gaddr,
 
     mr = pbdev->pdev->io_regions[pcias].memory;
     mr = s390_get_subregion(mr, offset, len);
+    if (!mr) {
+        s390_program_interrupt(env, PGM_OPERAND, ra);
+        return 0;
+    }
+
     offset -= mr->addr;
 
     for (i = 0; i < len; i += 8) {
@@ -841,7 +947,7 @@ int pcistb_service_call(S390CPU *cpu, uint8_t r1, uint8_t r3, uint64_t gaddr,
 
     for (i = 0; i < len / 8; i++) {
         result = memory_region_dispatch_write(mr, offset + i * 8,
-                                              ldq_p(buffer + i * 8),
+                                              ldq_be_p(buffer + i * 8),
                                               MO_64, MEMTXATTRS_UNSPECIFIED);
         if (result != MEMTX_OK) {
             s390_program_interrupt(env, PGM_OPERAND, ra);
@@ -862,13 +968,13 @@ specification_error:
 static int reg_irqs(CPUS390XState *env, S390PCIBusDevice *pbdev, ZpciFib fib)
 {
     int ret, len;
-    uint8_t isc = FIB_DATA_ISC(ldl_p(&fib.data));
+    uint8_t isc = FIB_DATA_ISC(ldl_be_p(&fib.data));
 
     pbdev->routes.adapter.adapter_id = css_get_adapter_id(
                                        CSS_IO_ADAPTER_PCI, isc);
-    pbdev->summary_ind = get_indicator(ldq_p(&fib.aisb), sizeof(uint64_t));
-    len = BITS_TO_LONGS(FIB_DATA_NOI(ldl_p(&fib.data))) * sizeof(unsigned long);
-    pbdev->indicator = get_indicator(ldq_p(&fib.aibv), len);
+    pbdev->summary_ind = get_indicator(ldq_be_p(&fib.aisb), sizeof(uint64_t));
+    len = BITS_TO_LONGS(FIB_DATA_NOI(ldl_be_p(&fib.data))) * sizeof(unsigned long);
+    pbdev->indicator = get_indicator(ldq_be_p(&fib.aibv), len);
 
     ret = map_indicator(&pbdev->routes.adapter, pbdev->summary_ind);
     if (ret) {
@@ -880,15 +986,15 @@ static int reg_irqs(CPUS390XState *env, S390PCIBusDevice *pbdev, ZpciFib fib)
         goto out;
     }
 
-    pbdev->routes.adapter.summary_addr = ldq_p(&fib.aisb);
-    pbdev->routes.adapter.summary_offset = FIB_DATA_AISBO(ldl_p(&fib.data));
-    pbdev->routes.adapter.ind_addr = ldq_p(&fib.aibv);
-    pbdev->routes.adapter.ind_offset = FIB_DATA_AIBVO(ldl_p(&fib.data));
+    pbdev->routes.adapter.summary_addr = ldq_be_p(&fib.aisb);
+    pbdev->routes.adapter.summary_offset = FIB_DATA_AISBO(ldl_be_p(&fib.data));
+    pbdev->routes.adapter.ind_addr = ldq_be_p(&fib.aibv);
+    pbdev->routes.adapter.ind_offset = FIB_DATA_AIBVO(ldl_be_p(&fib.data));
     pbdev->isc = isc;
-    pbdev->noi = FIB_DATA_NOI(ldl_p(&fib.data));
-    pbdev->sum = FIB_DATA_SUM(ldl_p(&fib.data));
+    pbdev->noi = FIB_DATA_NOI(ldl_be_p(&fib.data));
+    pbdev->sum = FIB_DATA_SUM(ldl_be_p(&fib.data));
 
-    DPRINTF("reg_irqs adapter id %d\n", pbdev->routes.adapter.adapter_id);
+    trace_s390_pci_irqs("register", pbdev->routes.adapter.adapter_id);
     return 0;
 out:
     release_indicator(&pbdev->routes.adapter, pbdev->summary_ind);
@@ -913,49 +1019,91 @@ int pci_dereg_irqs(S390PCIBusDevice *pbdev)
     pbdev->noi = 0;
     pbdev->sum = 0;
 
-    DPRINTF("dereg_irqs adapter id %d\n", pbdev->routes.adapter.adapter_id);
+    trace_s390_pci_irqs("unregister", pbdev->routes.adapter.adapter_id);
     return 0;
+}
+
+bool s390_pci_is_translation_enabled(uint64_t g_iota)
+{
+    return ((g_iota >> 11) & 0x1) != 0; /* "T" bit */
+}
+
+bool s390_pci_ioat_validate(S390PCIBusDevice *pbdev, uint64_t pba,
+                             uint64_t pal, uint64_t g_iota, Error **errp)
+{
+    uint8_t dt = (g_iota >> 2) & 0x7;
+    bool t = s390_pci_is_translation_enabled(g_iota);
+
+    if (pba > pal || pba < pbdev->zpci_fn.sdma || pal > pbdev->zpci_fn.edma) {
+        error_setg(errp,
+                   "ioat pba 0x%"PRIx64" pal 0x%"PRIx64" out of device dma range"
+                   " [0x%"PRIx64" 0x%"PRIx64"]",
+                   pba, pal, pbdev->zpci_fn.sdma, pbdev->zpci_fn.edma);
+        return false;
+    }
+    /* currently we only support designation type 1 with translation */
+    if (t && dt != ZPCI_IOTA_RTTO) {
+        error_setg(errp, "unsupported ioat dt %d t %d", dt, t);
+        return false;
+    } else if (!t && !pbdev->rtr_avail) {
+        error_setg(errp, "relaxed translation not allowed");
+        return false;
+    }
+
+    /*
+     * We report an EDMA that may exceed what QEMU can handle in support
+     * of direct-mapping.  If the guest attempts to register an IOAT that
+     * is too large, reject it with an informative message.  Only direct
+     * mapping can be used for guests of this size until support is added
+     * to QEMU for additional IOAT regions.
+     */
+    if (t && pal >= ZPCI_TABLE_SIZE_RT) {
+        error_setg(errp,
+                   "ioat pal 0x%"PRIx64" exceeds max translatable address",
+                   pal);
+        return false;
+    }
+    return true;
 }
 
 static int reg_ioat(CPUS390XState *env, S390PCIBusDevice *pbdev, ZpciFib fib,
                     uintptr_t ra)
 {
-    S390PCIIOMMU *iommu = pbdev->iommu;
-    uint64_t pba = ldq_p(&fib.pba);
-    uint64_t pal = ldq_p(&fib.pal);
-    uint64_t g_iota = ldq_p(&fib.iota);
-    uint8_t dt = (g_iota >> 2) & 0x7;
-    uint8_t t = (g_iota >> 11) & 0x1;
+    Error *err = NULL;
+    uint64_t pba = ldq_be_p(&fib.pba);
+    uint64_t pal = ldq_be_p(&fib.pal);
+    uint64_t g_iota = ldq_be_p(&fib.iota);
+    bool t = s390_pci_is_translation_enabled(g_iota);
 
     pba &= ~0xfff;
     pal |= 0xfff;
-    if (pba > pal || pba < pbdev->zpci_fn.sdma || pal > pbdev->zpci_fn.edma) {
+
+    if (!s390_pci_ioat_validate(pbdev, pba, pal, g_iota, &err)) {
+        qemu_log_mask(LOG_GUEST_ERROR, "%s\n", error_get_pretty(err));
+        error_free(err);
         s390_program_interrupt(env, PGM_OPERAND, ra);
         return -EINVAL;
     }
 
-    /* currently we only support designation type 1 with translation */
-    if (!(dt == ZPCI_IOTA_RTTO && t)) {
-        error_report("unsupported ioat dt %d t %d", dt, t);
-        s390_program_interrupt(env, PGM_OPERAND, ra);
-        return -EINVAL;
+    pbdev->pba = pba;
+    pbdev->pal = pal;
+    pbdev->g_iota = g_iota;
+
+    if (t) {
+        s390_pci_iommu_enable(pbdev);
+    } else {
+        s390_pci_iommu_direct_map_enable(pbdev);
     }
-
-    iommu->pba = pba;
-    iommu->pal = pal;
-    iommu->g_iota = g_iota;
-
-    s390_pci_iommu_enable(iommu);
 
     return 0;
 }
 
-void pci_dereg_ioat(S390PCIIOMMU *iommu)
+void pci_dereg_ioat(S390PCIBusDevice *pbdev)
 {
-    s390_pci_iommu_disable(iommu);
-    iommu->pba = 0;
-    iommu->pal = 0;
-    iommu->g_iota = 0;
+    s390_pci_iommu_disable(pbdev);
+    pbdev->pba = 0;
+    pbdev->pal = 0;
+    pbdev->g_iota = 0;
 }
 
 void fmb_timer_free(S390PCIBusDevice *pbdev)
@@ -1008,9 +1156,16 @@ static int fmb_do_update(S390PCIBusDevice *pbdev, int offset, uint64_t val,
     return ret;
 }
 
-static void fmb_update(void *opaque)
+void s390_pci_schedule_fmb_timer(S390PCIBusDevice *pbdev, uint64_t start)
+{
+    timer_mod(pbdev->fmb_timer, start + pbdev->pci_group->zpci_group.mui);
+}
+
+void fmb_update(void *opaque)
 {
     S390PCIBusDevice *pbdev = opaque;
+
+    /* Must be read before updating U bit */
     int64_t t = qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL);
     int i;
 
@@ -1047,7 +1202,33 @@ static void fmb_update(void *opaque)
                       sizeof(pbdev->fmb.last_update))) {
         return;
     }
-    timer_mod(pbdev->fmb_timer, t + pbdev->pci_group->zpci_group.mui);
+    s390_pci_schedule_fmb_timer(pbdev, t);
+}
+
+static int mpcifc_reg_int_interp(S390PCIBusDevice *pbdev, ZpciFib *fib)
+{
+    int rc;
+
+    rc = s390_pci_kvm_aif_enable(pbdev, fib, pbdev->forwarding_assist);
+    if (rc) {
+        trace_s390_pci_kvm_aif("enable");
+        return rc;
+    }
+
+    return 0;
+}
+
+static int mpcifc_dereg_int_interp(S390PCIBusDevice *pbdev, ZpciFib *fib)
+{
+    int rc;
+
+    rc = s390_pci_kvm_aif_disable(pbdev);
+    if (rc) {
+        trace_s390_pci_kvm_aif("disable");
+        return rc;
+    }
+
+    return 0;
 }
 
 int mpcifc_service_call(S390CPU *cpu, uint8_t r1, uint64_t fiba, uint8_t ar,
@@ -1076,7 +1257,7 @@ int mpcifc_service_call(S390CPU *cpu, uint8_t r1, uint64_t fiba, uint8_t ar,
 
     pbdev = s390_pci_find_dev_by_fh(s390_get_phb(), fh);
     if (!pbdev) {
-        DPRINTF("mpcifc no pci dev fh 0x%x\n", fh);
+        trace_s390_pci_nodev("mpcifc", fh);
         setcc(cpu, ZPCI_PCI_LS_INVAL_HANDLE);
         return 0;
     }
@@ -1104,7 +1285,12 @@ int mpcifc_service_call(S390CPU *cpu, uint8_t r1, uint64_t fiba, uint8_t ar,
 
     switch (oc) {
     case ZPCI_MOD_FC_REG_INT:
-        if (pbdev->summary_ind) {
+        if (pbdev->interp) {
+            if (mpcifc_reg_int_interp(pbdev, &fib)) {
+                cc = ZPCI_PCI_LS_ERR;
+                s390_set_status_code(env, r1, ZPCI_MOD_ST_SEQUENCE);
+            }
+        } else if (pbdev->summary_ind) {
             cc = ZPCI_PCI_LS_ERR;
             s390_set_status_code(env, r1, ZPCI_MOD_ST_SEQUENCE);
         } else if (reg_irqs(env, pbdev, fib)) {
@@ -1113,7 +1299,12 @@ int mpcifc_service_call(S390CPU *cpu, uint8_t r1, uint64_t fiba, uint8_t ar,
         }
         break;
     case ZPCI_MOD_FC_DEREG_INT:
-        if (!pbdev->summary_ind) {
+        if (pbdev->interp) {
+            if (mpcifc_dereg_int_interp(pbdev, &fib)) {
+                cc = ZPCI_PCI_LS_ERR;
+                s390_set_status_code(env, r1, ZPCI_MOD_ST_SEQUENCE);
+            }
+        } else if (!pbdev->summary_ind) {
             cc = ZPCI_PCI_LS_ERR;
             s390_set_status_code(env, r1, ZPCI_MOD_ST_SEQUENCE);
         } else {
@@ -1124,7 +1315,7 @@ int mpcifc_service_call(S390CPU *cpu, uint8_t r1, uint64_t fiba, uint8_t ar,
         if (dmaas != 0) {
             cc = ZPCI_PCI_LS_ERR;
             s390_set_status_code(env, r1, ZPCI_MOD_ST_DMAAS_INVAL);
-        } else if (pbdev->iommu->enabled) {
+        } else if (pbdev->iommu_enabled) {
             cc = ZPCI_PCI_LS_ERR;
             s390_set_status_code(env, r1, ZPCI_MOD_ST_SEQUENCE);
         } else if (reg_ioat(env, pbdev, fib, ra)) {
@@ -1136,22 +1327,22 @@ int mpcifc_service_call(S390CPU *cpu, uint8_t r1, uint64_t fiba, uint8_t ar,
         if (dmaas != 0) {
             cc = ZPCI_PCI_LS_ERR;
             s390_set_status_code(env, r1, ZPCI_MOD_ST_DMAAS_INVAL);
-        } else if (!pbdev->iommu->enabled) {
+        } else if (!pbdev->iommu_enabled) {
             cc = ZPCI_PCI_LS_ERR;
             s390_set_status_code(env, r1, ZPCI_MOD_ST_SEQUENCE);
         } else {
-            pci_dereg_ioat(pbdev->iommu);
+            pci_dereg_ioat(pbdev);
         }
         break;
     case ZPCI_MOD_FC_REREG_IOAT:
         if (dmaas != 0) {
             cc = ZPCI_PCI_LS_ERR;
             s390_set_status_code(env, r1, ZPCI_MOD_ST_DMAAS_INVAL);
-        } else if (!pbdev->iommu->enabled) {
+        } else if (!pbdev->iommu_enabled) {
             cc = ZPCI_PCI_LS_ERR;
             s390_set_status_code(env, r1, ZPCI_MOD_ST_SEQUENCE);
         } else {
-            pci_dereg_ioat(pbdev->iommu);
+            pci_dereg_ioat(pbdev);
             if (reg_ioat(env, pbdev, fib, ra)) {
                 cc = ZPCI_PCI_LS_ERR;
                 s390_set_status_code(env, r1, ZPCI_MOD_ST_INSUF_RES);
@@ -1180,7 +1371,7 @@ int mpcifc_service_call(S390CPU *cpu, uint8_t r1, uint64_t fiba, uint8_t ar,
         }
         break;
     case ZPCI_MOD_FC_SET_MEASURE: {
-        uint64_t fmb_addr = ldq_p(&fib.fmb_addr);
+        uint64_t fmb_addr = ldq_be_p(&fib.fmb_addr);
 
         if (fmb_addr & FMBK_MASK) {
             cc = ZPCI_PCI_LS_ERR;
@@ -1204,9 +1395,8 @@ int mpcifc_service_call(S390CPU *cpu, uint8_t r1, uint64_t fiba, uint8_t ar,
             timer_del(pbdev->fmb_timer);
         }
         pbdev->fmb_addr = fmb_addr;
-        timer_mod(pbdev->fmb_timer,
-                  qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) +
-                                    pbdev->pci_group->zpci_group.mui);
+        s390_pci_schedule_fmb_timer(pbdev,
+                                    qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL));
         break;
     }
     default:
@@ -1277,7 +1467,7 @@ int stpcifc_service_call(S390CPU *cpu, uint8_t r1, uint64_t fiba, uint8_t ar,
         /* fallthrough */
     case ZPCI_FS_ENABLED:
         fib.fc |= 0x80;
-        if (pbdev->iommu->enabled) {
+        if (pbdev->iommu_enabled) {
             fib.fc |= 0x10;
         }
         if (!(fh & FH_MASK_ENABLE)) {
@@ -1290,17 +1480,17 @@ int stpcifc_service_call(S390CPU *cpu, uint8_t r1, uint64_t fiba, uint8_t ar,
         return 0;
     }
 
-    stq_p(&fib.pba, pbdev->iommu->pba);
-    stq_p(&fib.pal, pbdev->iommu->pal);
-    stq_p(&fib.iota, pbdev->iommu->g_iota);
-    stq_p(&fib.aibv, pbdev->routes.adapter.ind_addr);
-    stq_p(&fib.aisb, pbdev->routes.adapter.summary_addr);
-    stq_p(&fib.fmb_addr, pbdev->fmb_addr);
+    stq_be_p(&fib.pba, pbdev->pba);
+    stq_be_p(&fib.pal, pbdev->pal);
+    stq_be_p(&fib.iota, pbdev->g_iota);
+    stq_be_p(&fib.aibv, pbdev->routes.adapter.ind_addr);
+    stq_be_p(&fib.aisb, pbdev->routes.adapter.summary_addr);
+    stq_be_p(&fib.fmb_addr, pbdev->fmb_addr);
 
     data = ((uint32_t)pbdev->isc << 28) | ((uint32_t)pbdev->noi << 16) |
            ((uint32_t)pbdev->routes.adapter.ind_offset << 8) |
            ((uint32_t)pbdev->sum << 7) | pbdev->routes.adapter.summary_offset;
-    stl_p(&fib.data, data);
+    stl_be_p(&fib.data, data);
 
 out:
     if (s390_cpu_virt_mem_write(cpu, fiba, ar, (uint8_t *)&fib, sizeof(fib))) {

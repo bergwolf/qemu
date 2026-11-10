@@ -3,6 +3,7 @@
 
 #include "hw/acpi/acpi-defs.h"
 #include "hw/acpi/bios-linker-loader.h"
+#include "hw/core/cpu.h"
 
 #define ACPI_BUILD_APPNAME6 "BOCHS "
 #define ACPI_BUILD_APPNAME8 "BXPC    "
@@ -252,6 +253,7 @@ struct CrsRangeSet {
 /* Consumer/Producer */
 #define AML_SERIAL_BUS_FLAG_CONSUME_ONLY        (1 << 1)
 
+#define ACPI_APEI_ERROR_DEVICE   "GEDD"
 /**
  * init_aml_allocator:
  *
@@ -277,7 +279,7 @@ void free_aml_allocator(void);
  * @child: element that is copied into @parent_ctx context
  *
  * Joins Aml elements together and helps to construct AML tables
- * Examle of usage:
+ * Example of usage:
  *   Aml *table = aml_def_block("SSDT", ...);
  *   Aml *sb = aml_scope("\\_SB");
  *   Aml *dev = aml_device("PCI0");
@@ -289,7 +291,7 @@ void free_aml_allocator(void);
 void aml_append(Aml *parent_ctx, Aml *child);
 
 /* non block AML object primitives */
-Aml *aml_name(const char *name_format, ...) GCC_FMT_ATTR(1, 2);
+Aml *aml_name(const char *name_format, ...) G_GNUC_PRINTF(1, 2);
 Aml *aml_name_decl(const char *name, Aml *val);
 Aml *aml_debug(void);
 Aml *aml_return(Aml *val);
@@ -341,16 +343,18 @@ Aml *aml_io(AmlIODecode dec, uint16_t min_base, uint16_t max_base,
 Aml *aml_operation_region(const char *name, AmlRegionSpace rs,
                           Aml *offset, uint32_t len);
 Aml *aml_irq_no_flags(uint8_t irq);
+Aml *aml_irq(uint8_t irq, AmlLevelAndEdge level_and_edge,
+             AmlActiveHighAndLow high_and_low, AmlShared shared);
 Aml *aml_named_field(const char *name, unsigned length);
 Aml *aml_reserved_field(unsigned length);
 Aml *aml_local(int num);
-Aml *aml_string(const char *name_format, ...) GCC_FMT_ATTR(1, 2);
+Aml *aml_string(const char *name_format, ...) G_GNUC_PRINTF(1, 2);
 Aml *aml_lnot(Aml *arg);
 Aml *aml_equal(Aml *arg1, Aml *arg2);
 Aml *aml_lgreater(Aml *arg1, Aml *arg2);
 Aml *aml_lgreater_equal(Aml *arg1, Aml *arg2);
 Aml *aml_processor(uint8_t proc_id, uint32_t pblk_addr, uint8_t pblk_len,
-                   const char *name_format, ...) GCC_FMT_ATTR(4, 5);
+                   const char *name_format, ...) G_GNUC_PRINTF(4, 5);
 Aml *aml_eisaid(const char *str);
 Aml *aml_word_bus_number(AmlMinFixed min_fixed, AmlMaxFixed max_fixed,
                          AmlDecode dec, uint16_t addr_gran,
@@ -382,10 +386,11 @@ Aml *aml_dma(AmlDmaType typ, AmlDmaBusMaster bm, AmlTransferSize sz,
              uint8_t channel);
 Aml *aml_sleep(uint64_t msec);
 Aml *aml_i2c_serial_bus_device(uint16_t address, const char *resource_source);
+Aml *aml_error_device(void);
 
 /* Block AML object primitives */
-Aml *aml_scope(const char *name_format, ...) GCC_FMT_ATTR(1, 2);
-Aml *aml_device(const char *name_format, ...) GCC_FMT_ATTR(1, 2);
+Aml *aml_scope(const char *name_format, ...) G_GNUC_PRINTF(1, 2);
+Aml *aml_device(const char *name_format, ...) G_GNUC_PRINTF(1, 2);
 Aml *aml_method(const char *name, int arg_count, AmlSerializeFlag sflag);
 Aml *aml_if(Aml *predicate);
 Aml *aml_else(void);
@@ -460,7 +465,7 @@ build_xsdt(GArray *table_data, BIOSLinker *linker, GArray *table_offsets,
 
 int
 build_append_named_dword(GArray *array, const char *name_format, ...)
-GCC_FMT_ATTR(2, 3);
+G_GNUC_PRINTF(2, 3);
 
 void build_append_gas(GArray *table, AmlAddressSpace as,
                       uint8_t bit_width, uint8_t bit_offset,
@@ -486,15 +491,27 @@ Aml *build_crs(PCIHostState *host, CrsRangeSet *range_set, uint32_t io_offset,
 void build_srat_memory(GArray *table_data, uint64_t base,
                        uint64_t len, int node, MemoryAffinityFlags flags);
 
+void build_srat_pci_generic_initiator(GArray *table_data, uint32_t node,
+                                      uint16_t segment, uint8_t bus,
+                                      uint8_t devfn);
+
+void build_srat_acpi_generic_port(GArray *table_data, uint32_t node,
+                                  const char *hid, uint32_t uid);
+
 void build_slit(GArray *table_data, BIOSLinker *linker, MachineState *ms,
                 const char *oem_id, const char *oem_table_id);
 
 void build_pptt(GArray *table_data, BIOSLinker *linker, MachineState *ms,
-                const char *oem_id, const char *oem_table_id);
+                const char *oem_id, const char *oem_table_id,
+                int num_caches, CPUCoreCaches *caches);
 
 void build_fadt(GArray *tbl, BIOSLinker *linker, const AcpiFadtData *f,
                 const char *oem_id, const char *oem_table_id);
 
 void build_tpm2(GArray *table_data, BIOSLinker *linker, GArray *tcpalog,
                 const char *oem_id, const char *oem_table_id);
+
+void build_spcr(GArray *table_data, BIOSLinker *linker,
+                const AcpiSpcrData *f, const uint8_t rev,
+                const char *oem_id, const char *oem_table_id, const char *name);
 #endif

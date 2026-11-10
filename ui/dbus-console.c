@@ -22,32 +22,41 @@
  * THE SOFTWARE.
  */
 #include "qemu/osdep.h"
+#include "qemu/error-report.h"
 #include "qapi/error.h"
 #include "ui/input.h"
 #include "ui/kbd-state.h"
 #include "trace.h"
+#include <stdint.h>
 
+#ifdef G_OS_UNIX
 #include <gio/gunixfdlist.h>
+#endif
 
 #include "dbus.h"
+
+static struct touch_slot touch_slots[INPUT_EVENT_SLOTS_MAX];
 
 struct _DBusDisplayConsole {
     GDBusObjectSkeleton parent_instance;
     DisplayChangeListener dcl;
 
     DBusDisplay *display;
-    QemuConsole *con;
-    GHashTable *listeners;
+    GPtrArray *listeners;
     QemuDBusDisplay1Console *iface;
 
     QemuDBusDisplay1Keyboard *iface_kbd;
     QKbdState *kbd;
+    Notifier led_notifier;
 
     QemuDBusDisplay1Mouse *iface_mouse;
+    QemuDBusDisplay1MultiTouch *iface_touch;
     gboolean last_set;
     guint last_x;
     guint last_y;
     Notifier mouse_mode_notifier;
+
+    QemuDBusDisplay1UIInfo *iface_ui_info;
 };
 
 G_DEFINE_TYPE(DBusDisplayConsole,
@@ -93,7 +102,8 @@ dbus_gl_scanout_texture(DisplayChangeListener *dcl,
                         uint32_t backing_width,
                         uint32_t backing_height,
                         uint32_t x, uint32_t y,
-                        uint32_t w, uint32_t h)
+                        uint32_t w, uint32_t h,
+                        void *d3d_tex2d)
 {
     DBusDisplayConsole *ddc = container_of(dcl, DBusDisplayConsole, dcl);
 
@@ -104,11 +114,14 @@ static void
 dbus_gl_scanout_dmabuf(DisplayChangeListener *dcl,
                        QemuDmaBuf *dmabuf)
 {
+    uint32_t width, height;
+
     DBusDisplayConsole *ddc = container_of(dcl, DBusDisplayConsole, dcl);
 
-    dbus_display_console_set_size(ddc,
-                                  dmabuf->width,
-                                  dmabuf->height);
+    width = qemu_dmabuf_get_width(dmabuf);
+    height = qemu_dmabuf_get_height(dmabuf);
+
+    dbus_display_console_set_size(ddc, width, height);
 }
 
 static void
@@ -118,7 +131,7 @@ dbus_gl_scanout_update(DisplayChangeListener *dcl,
 {
 }
 
-static const DisplayChangeListenerOps dbus_console_dcl_ops = {
+const DisplayChangeListenerOps dbus_console_dcl_ops = {
     .dpy_name                = "dbus-console",
     .dpy_gfx_switch          = dbus_gfx_switch,
     .dpy_gfx_update          = dbus_gfx_update,
@@ -133,9 +146,7 @@ dbus_display_console_init(DBusDisplayConsole *object)
 {
     DBusDisplayConsole *ddc = DBUS_DISPLAY_CONSOLE(object);
 
-    ddc->listeners = g_hash_table_new_full(g_str_hash, g_str_equal,
-                                            NULL, g_object_unref);
-    ddc->dcl.ops = &dbus_console_dcl_ops;
+    ddc->listeners = g_ptr_array_new_with_free_func(g_object_unref);
 }
 
 static void
@@ -143,10 +154,15 @@ dbus_display_console_dispose(GObject *object)
 {
     DBusDisplayConsole *ddc = DBUS_DISPLAY_CONSOLE(object);
 
-    unregister_displaychangelistener(&ddc->dcl);
+    qemu_input_led_notifier_remove(&ddc->led_notifier);
+    qemu_console_unregister_listener(&ddc->dcl);
+    qemu_remove_mouse_mode_change_notifier(&ddc->mouse_mode_notifier);
+    g_clear_object(&ddc->iface_ui_info);
+    g_clear_object(&ddc->iface_touch);
+    g_clear_object(&ddc->iface_mouse);
     g_clear_object(&ddc->iface_kbd);
     g_clear_object(&ddc->iface);
-    g_clear_pointer(&ddc->listeners, g_hash_table_unref);
+    g_clear_pointer(&ddc->listeners, g_ptr_array_unref);
     g_clear_pointer(&ddc->kbd, qkbd_state_free);
 
     G_OBJECT_CLASS(dbus_display_console_parent_class)->dispose(object);
@@ -168,7 +184,7 @@ listener_vanished_cb(DBusDisplayListener *listener)
 
     trace_dbus_listener_vanished(name);
 
-    g_hash_table_remove(ddc->listeners, name);
+    g_ptr_array_remove_fast(ddc->listeners, listener);
     qkbd_state_lift_all_keys(ddc->kbd);
 }
 
@@ -191,7 +207,7 @@ dbus_console_set_ui_info(DBusDisplayConsole *ddc,
         .height = arg_height,
     };
 
-    if (!dpy_ui_info_supported(ddc->con)) {
+    if (!qemu_console_ui_info_supported(ddc->dcl.con)) {
         g_dbus_method_invocation_return_error(invocation,
                                               DBUS_DISPLAY_ERROR,
                                               DBUS_DISPLAY_ERROR_UNSUPPORTED,
@@ -199,15 +215,52 @@ dbus_console_set_ui_info(DBusDisplayConsole *ddc,
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-    dpy_set_ui_info(ddc->con, &info, false);
+    qemu_console_set_ui_info(ddc->dcl.con, &info, false);
     qemu_dbus_display1_console_complete_set_uiinfo(ddc->iface, invocation);
     return DBUS_METHOD_INVOCATION_HANDLED;
 }
 
+#ifdef G_OS_WIN32
+bool
+dbus_win32_import_socket(GDBusMethodInvocation *invocation,
+                         GVariant *arg_listener, int *socket)
+{
+    gsize n;
+    WSAPROTOCOL_INFOW *info = (void *)g_variant_get_fixed_array(arg_listener, &n, 1);
+
+    if (!info || n != sizeof(*info)) {
+        g_dbus_method_invocation_return_error(
+            invocation,
+            DBUS_DISPLAY_ERROR,
+            DBUS_DISPLAY_ERROR_FAILED,
+            "Failed to get socket infos");
+        return false;
+    }
+
+    *socket = WSASocketW(FROM_PROTOCOL_INFO,
+                         FROM_PROTOCOL_INFO,
+                         FROM_PROTOCOL_INFO,
+                         info, 0, 0);
+    if (*socket == INVALID_SOCKET) {
+        g_autofree gchar *emsg = g_win32_error_message(WSAGetLastError());
+        g_dbus_method_invocation_return_error(
+            invocation,
+            DBUS_DISPLAY_ERROR,
+            DBUS_DISPLAY_ERROR_FAILED,
+            "Couldn't create socket: %s", emsg);
+        return false;
+    }
+
+    return true;
+}
+#endif
+
 static gboolean
 dbus_console_register_listener(DBusDisplayConsole *ddc,
                                GDBusMethodInvocation *invocation,
+#ifdef G_OS_UNIX
                                GUnixFDList *fd_list,
+#endif
                                GVariant *arg_listener)
 {
     const char *sender = g_dbus_method_invocation_get_sender(invocation);
@@ -219,16 +272,11 @@ dbus_console_register_listener(DBusDisplayConsole *ddc,
     DBusDisplayListener *listener;
     int fd;
 
-    if (sender && g_hash_table_contains(ddc->listeners, sender)) {
-        g_dbus_method_invocation_return_error(
-            invocation,
-            DBUS_DISPLAY_ERROR,
-            DBUS_DISPLAY_ERROR_INVALID,
-            "`%s` is already registered!",
-            sender);
+#ifdef G_OS_WIN32
+    if (!dbus_win32_import_socket(invocation, arg_listener, &fd)) {
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
-
+#else
     fd = g_unix_fd_list_get(fd_list, g_variant_get_handle(arg_listener), &err);
     if (err) {
         g_dbus_method_invocation_return_error(
@@ -238,6 +286,7 @@ dbus_console_register_listener(DBusDisplayConsole *ddc,
             "Couldn't get peer fd: %s", err->message);
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
+#endif
 
     socket = g_socket_new_from_fd(fd, &err);
     if (err) {
@@ -246,18 +295,32 @@ dbus_console_register_listener(DBusDisplayConsole *ddc,
             DBUS_DISPLAY_ERROR,
             DBUS_DISPLAY_ERROR_FAILED,
             "Couldn't make a socket: %s", err->message);
+#ifdef G_OS_WIN32
+        closesocket(fd);
+#else
         close(fd);
+#endif
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
     socket_conn = g_socket_connection_factory_create_connection(socket);
 
     qemu_dbus_display1_console_complete_register_listener(
-        ddc->iface, invocation, NULL);
+        ddc->iface, invocation
+#ifdef G_OS_UNIX
+        , NULL
+#endif
+    );
+
+    GDBusConnectionFlags flags =
+        G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_SERVER;
+#ifdef WIN32
+    flags |= G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_ALLOW_ANONYMOUS;
+#endif
 
     listener_conn = g_dbus_connection_new_sync(
         G_IO_STREAM(socket_conn),
         guid,
-        G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_SERVER,
+        flags,
         NULL, NULL, &err);
     if (err) {
         error_report("Failed to setup peer connection: %s", err->message);
@@ -269,9 +332,7 @@ dbus_console_register_listener(DBusDisplayConsole *ddc,
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-    g_hash_table_insert(ddc->listeners,
-                        (gpointer)dbus_display_listener_get_bus_name(listener),
-                        listener);
+    g_ptr_array_add(ddc->listeners, listener);
     g_object_connect(listener_conn,
                      "swapped-signal::closed", listener_vanished_cb, listener,
                      NULL);
@@ -285,11 +346,11 @@ dbus_kbd_press(DBusDisplayConsole *ddc,
                GDBusMethodInvocation *invocation,
                guint arg_keycode)
 {
-    QKeyCode qcode = qemu_input_key_number_to_qcode(arg_keycode);
+    unsigned int lnx = qemu_input_key_number_to_linux(arg_keycode);
 
     trace_dbus_kbd_press(arg_keycode);
 
-    qkbd_state_key_event(ddc->kbd, qcode, true);
+    qkbd_state_key_event(ddc->kbd, lnx, true);
 
     qemu_dbus_display1_keyboard_complete_press(ddc->iface_kbd, invocation);
 
@@ -301,11 +362,11 @@ dbus_kbd_release(DBusDisplayConsole *ddc,
                  GDBusMethodInvocation *invocation,
                  guint arg_keycode)
 {
-    QKeyCode qcode = qemu_input_key_number_to_qcode(arg_keycode);
+    unsigned int lnx = qemu_input_key_number_to_linux(arg_keycode);
 
     trace_dbus_kbd_release(arg_keycode);
 
-    qkbd_state_key_event(ddc->kbd, qcode, false);
+    qkbd_state_key_event(ddc->kbd, lnx, false);
 
     qemu_dbus_display1_keyboard_complete_release(ddc->iface_kbd, invocation);
 
@@ -313,11 +374,13 @@ dbus_kbd_release(DBusDisplayConsole *ddc,
 }
 
 static void
-dbus_kbd_qemu_leds_updated(void *data, int ledstate)
+dbus_kbd_qemu_leds_updated(Notifier *notifier, void *data)
 {
-    DBusDisplayConsole *ddc = DBUS_DISPLAY_CONSOLE(data);
+    DBusDisplayConsole *ddc = container_of(notifier, DBusDisplayConsole,
+                                           led_notifier);
+    uint32_t leds_mask = qemu_input_get_leds_mask(ddc->dcl.con);
 
-    qemu_dbus_display1_keyboard_set_modifiers(ddc->iface_kbd, ledstate);
+    qemu_dbus_display1_keyboard_set_modifiers(ddc->iface_kbd, leds_mask);
 }
 
 static gboolean
@@ -327,7 +390,7 @@ dbus_mouse_rel_motion(DBusDisplayConsole *ddc,
 {
     trace_dbus_mouse_rel_motion(dx, dy);
 
-    if (qemu_input_is_absolute()) {
+    if (qemu_input_is_absolute(ddc->dcl.con)) {
         g_dbus_method_invocation_return_error(
             invocation, DBUS_DISPLAY_ERROR,
             DBUS_DISPLAY_ERROR_INVALID,
@@ -335,13 +398,53 @@ dbus_mouse_rel_motion(DBusDisplayConsole *ddc,
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-    qemu_input_queue_rel(ddc->con, INPUT_AXIS_X, dx);
-    qemu_input_queue_rel(ddc->con, INPUT_AXIS_Y, dy);
+    qemu_input_queue_rel(ddc->dcl.con, INPUT_AXIS_X, dx);
+    qemu_input_queue_rel(ddc->dcl.con, INPUT_AXIS_Y, dy);
     qemu_input_event_sync();
 
     qemu_dbus_display1_mouse_complete_rel_motion(ddc->iface_mouse,
                                                     invocation);
 
+    return DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static gboolean
+dbus_touch_send_event(DBusDisplayConsole *ddc,
+                      GDBusMethodInvocation *invocation,
+                      guint kind, uint64_t num_slot,
+                      double x, double y)
+{
+    Error *error = NULL;
+    int width, height;
+    trace_dbus_touch_send_event(kind, num_slot, x, y);
+
+    if (kind != INPUT_MULTI_TOUCH_TYPE_BEGIN &&
+        kind != INPUT_MULTI_TOUCH_TYPE_UPDATE &&
+        kind != INPUT_MULTI_TOUCH_TYPE_CANCEL &&
+        kind != INPUT_MULTI_TOUCH_TYPE_END)
+    {
+        g_dbus_method_invocation_return_error(
+            invocation, DBUS_DISPLAY_ERROR,
+            DBUS_DISPLAY_ERROR_INVALID,
+            "Invalid touch event kind");
+        return DBUS_METHOD_INVOCATION_HANDLED;
+    }
+    width = qemu_console_get_width(ddc->dcl.con, 0);
+    height = qemu_console_get_height(ddc->dcl.con, 0);
+
+    qemu_input_touch_event(ddc->dcl.con, touch_slots,
+                           num_slot, width, height,
+                           x, y, kind, &error);
+    if (error != NULL) {
+        g_dbus_method_invocation_return_error(
+            invocation, DBUS_DISPLAY_ERROR,
+            DBUS_DISPLAY_ERROR_INVALID,
+            error_get_pretty(error), NULL);
+        error_free(error);
+    } else {
+        qemu_dbus_display1_multi_touch_complete_send_event(ddc->iface_touch,
+                                                           invocation);
+    }
     return DBUS_METHOD_INVOCATION_HANDLED;
 }
 
@@ -354,7 +457,7 @@ dbus_mouse_set_pos(DBusDisplayConsole *ddc,
 
     trace_dbus_mouse_set_pos(x, y);
 
-    if (!qemu_input_is_absolute()) {
+    if (!qemu_input_is_absolute(ddc->dcl.con)) {
         g_dbus_method_invocation_return_error(
             invocation, DBUS_DISPLAY_ERROR,
             DBUS_DISPLAY_ERROR_INVALID,
@@ -362,8 +465,8 @@ dbus_mouse_set_pos(DBusDisplayConsole *ddc,
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-    width = qemu_console_get_width(ddc->con, 0);
-    height = qemu_console_get_height(ddc->con, 0);
+    width = qemu_console_get_width(ddc->dcl.con, 0);
+    height = qemu_console_get_height(ddc->dcl.con, 0);
     if (x >= width || y >= height) {
         g_dbus_method_invocation_return_error(
             invocation, DBUS_DISPLAY_ERROR,
@@ -371,8 +474,8 @@ dbus_mouse_set_pos(DBusDisplayConsole *ddc,
             "Invalid mouse position");
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
-    qemu_input_queue_abs(ddc->con, INPUT_AXIS_X, x, 0, width);
-    qemu_input_queue_abs(ddc->con, INPUT_AXIS_Y, y, 0, height);
+    qemu_input_queue_abs(ddc->dcl.con, INPUT_AXIS_X, x, 0, width);
+    qemu_input_queue_abs(ddc->dcl.con, INPUT_AXIS_Y, y, 0, height);
     qemu_input_event_sync();
 
     qemu_dbus_display1_mouse_complete_set_abs_position(ddc->iface_mouse,
@@ -388,7 +491,7 @@ dbus_mouse_press(DBusDisplayConsole *ddc,
 {
     trace_dbus_mouse_press(button);
 
-    qemu_input_queue_btn(ddc->con, button, true);
+    qemu_input_queue_btn(ddc->dcl.con, button, true);
     qemu_input_event_sync();
 
     qemu_dbus_display1_mouse_complete_press(ddc->iface_mouse, invocation);
@@ -403,7 +506,7 @@ dbus_mouse_release(DBusDisplayConsole *ddc,
 {
     trace_dbus_mouse_release(button);
 
-    qemu_input_queue_btn(ddc->con, button, false);
+    qemu_input_queue_btn(ddc->dcl.con, button, false);
     qemu_input_event_sync();
 
     qemu_dbus_display1_mouse_complete_release(ddc->iface_mouse, invocation);
@@ -412,19 +515,122 @@ dbus_mouse_release(DBusDisplayConsole *ddc,
 }
 
 static void
+dbus_mouse_update_is_absolute(DBusDisplayConsole *ddc)
+{
+    g_object_set(ddc->iface_mouse,
+                 "is-absolute", qemu_input_is_absolute(ddc->dcl.con),
+                 NULL);
+}
+
+static void
 dbus_mouse_mode_change(Notifier *notify, void *data)
 {
     DBusDisplayConsole *ddc =
         container_of(notify, DBusDisplayConsole, mouse_mode_notifier);
 
-    g_object_set(ddc->iface_mouse,
-                 "is-absolute", qemu_input_is_absolute(),
-                 NULL);
+    dbus_mouse_update_is_absolute(ddc);
+}
+
+static gboolean
+dbus_ui_info_get(DBusDisplayConsole *ddc,
+                 GDBusMethodInvocation *invocation)
+{
+    QemuUIInfo ui_info;
+    GVariantDict dict;
+
+    if (!qemu_console_ui_info_supported(ddc->dcl.con)) {
+        g_dbus_method_invocation_return_error(invocation,
+                                              DBUS_DISPLAY_ERROR,
+                                              DBUS_DISPLAY_ERROR_UNSUPPORTED,
+                                              "UIInfo is not supported");
+        return DBUS_METHOD_INVOCATION_HANDLED;
+    }
+
+    ui_info = *qemu_console_get_ui_info(ddc->dcl.con);
+    g_variant_dict_init(&dict, NULL);
+
+    g_variant_dict_insert(&dict, "width_mm", "q", ui_info.width_mm);
+    g_variant_dict_insert(&dict, "height_mm", "q", ui_info.height_mm);
+    g_variant_dict_insert(&dict, "xoff", "i", ui_info.xoff);
+    g_variant_dict_insert(&dict, "yoff", "i", ui_info.yoff);
+    g_variant_dict_insert(&dict, "width", "u", ui_info.width);
+    g_variant_dict_insert(&dict, "height", "u", ui_info.height);
+    g_variant_dict_insert(&dict, "refresh_rate", "u", ui_info.refresh_rate);
+
+    qemu_dbus_display1_uiinfo_complete_get(ddc->iface_ui_info, invocation,
+                                           g_variant_dict_end(&dict));
+
+    return DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static bool
+dbus_ui_info_apply_lookup(GDBusMethodInvocation *invocation,
+                          GVariantDict *dict,
+                          const gchar *key,
+                          const gchar *fmt_str,
+                          void *res)
+{
+    if (g_variant_dict_contains(dict, key) &&
+        !g_variant_dict_lookup(dict, key, fmt_str, res)) {
+        g_dbus_method_invocation_return_error(invocation,
+                                              DBUS_DISPLAY_ERROR,
+                                              DBUS_DISPLAY_ERROR_INVALID,
+                                              "%s must have D-Bus signature %s",
+                                              key, fmt_str);
+        return false;
+    }
+    return true;
+}
+
+static gboolean
+dbus_ui_info_apply(DBusDisplayConsole *ddc,
+                   GDBusMethodInvocation *invocation,
+                   GVariant *arg_ui_info)
+{
+    QemuUIInfo ui_info;
+    g_auto(GVariantDict) dict = G_VARIANT_DICT_INIT(arg_ui_info);
+
+    if (!qemu_console_ui_info_supported(ddc->dcl.con)) {
+        g_dbus_method_invocation_return_error(invocation,
+                                              DBUS_DISPLAY_ERROR,
+                                              DBUS_DISPLAY_ERROR_UNSUPPORTED,
+                                              "UIInfo is not supported");
+        return DBUS_METHOD_INVOCATION_HANDLED;
+    }
+
+    ui_info = *qemu_console_get_ui_info(ddc->dcl.con);
+
+    if (!dbus_ui_info_apply_lookup(invocation, &dict, "width_mm", "q",
+                                   &ui_info.width_mm) ||
+        !dbus_ui_info_apply_lookup(invocation, &dict, "height_mm", "q",
+                                   &ui_info.height_mm) ||
+        !dbus_ui_info_apply_lookup(invocation, &dict, "xoff", "i",
+                                   &ui_info.xoff) ||
+        !dbus_ui_info_apply_lookup(invocation, &dict, "yoff", "i",
+                                   &ui_info.yoff) ||
+        !dbus_ui_info_apply_lookup(invocation, &dict, "width", "u",
+                                   &ui_info.width) ||
+        !dbus_ui_info_apply_lookup(invocation, &dict, "height", "u",
+                                   &ui_info.height) ||
+        !dbus_ui_info_apply_lookup(invocation, &dict, "refresh_rate", "u",
+                                   &ui_info.refresh_rate)) {
+        return DBUS_METHOD_INVOCATION_HANDLED;
+    }
+
+    qemu_console_set_ui_info(ddc->dcl.con, &ui_info, false);
+    qemu_dbus_display1_uiinfo_complete_apply(ddc->iface_ui_info, invocation);
+
+    return DBUS_METHOD_INVOCATION_HANDLED;
 }
 
 int dbus_display_console_get_index(DBusDisplayConsole *ddc)
 {
-    return qemu_console_get_index(ddc->con);
+    return qemu_console_get_index(ddc->dcl.con);
+}
+
+QemuConsole *dbus_display_console_get_qemu_console(DBusDisplayConsole *ddc)
+{
+    return ddc->dcl.con;
 }
 
 DBusDisplayConsole *
@@ -434,7 +640,14 @@ dbus_display_console_new(DBusDisplay *display, QemuConsole *con)
     g_autofree char *label = NULL;
     char device_addr[256] = "";
     DBusDisplayConsole *ddc;
-    int idx;
+    int idx, i;
+    const char *interfaces[] = {
+        "org.qemu.Display1.Keyboard",
+        "org.qemu.Display1.Mouse",
+        "org.qemu.Display1.MultiTouch",
+        "org.qemu.Display1.UIInfo",
+        NULL
+    };
 
     assert(display);
     assert(con);
@@ -446,7 +659,6 @@ dbus_display_console_new(DBusDisplay *display, QemuConsole *con)
                         "g-object-path", path,
                         NULL);
     ddc->display = display;
-    ddc->con = con;
     /* handle errors, and skip non graphics? */
     qemu_console_fill_device_address(
         con, device_addr, sizeof(device_addr), NULL);
@@ -459,6 +671,7 @@ dbus_display_console_new(DBusDisplay *display, QemuConsole *con)
         "width", qemu_console_get_width(con, 0),
         "height", qemu_console_get_height(con, 0),
         "device-address", device_addr,
+        "interfaces", interfaces,
         NULL);
     g_object_connect(ddc->iface,
         "swapped-signal::handle-register-listener",
@@ -471,7 +684,8 @@ dbus_display_console_new(DBusDisplay *display, QemuConsole *con)
 
     ddc->kbd = qkbd_state_init(con);
     ddc->iface_kbd = qemu_dbus_display1_keyboard_skeleton_new();
-    qemu_add_led_event_handler(dbus_kbd_qemu_leds_updated, ddc);
+    ddc->led_notifier.notify = dbus_kbd_qemu_leds_updated;
+    qemu_input_led_notifier_add(&ddc->led_notifier);
     g_object_connect(ddc->iface_kbd,
         "swapped-signal::handle-press", dbus_kbd_press, ddc,
         "swapped-signal::handle-release", dbus_kbd_release, ddc,
@@ -489,9 +703,34 @@ dbus_display_console_new(DBusDisplay *display, QemuConsole *con)
     g_dbus_object_skeleton_add_interface(G_DBUS_OBJECT_SKELETON(ddc),
         G_DBUS_INTERFACE_SKELETON(ddc->iface_mouse));
 
-    register_displaychangelistener(&ddc->dcl);
+    ddc->iface_touch = qemu_dbus_display1_multi_touch_skeleton_new();
+    g_object_connect(ddc->iface_touch,
+        "swapped-signal::handle-send-event", dbus_touch_send_event, ddc,
+        NULL);
+    qemu_dbus_display1_multi_touch_set_max_slots(ddc->iface_touch,
+                                                 INPUT_EVENT_SLOTS_MAX);
+    g_dbus_object_skeleton_add_interface(G_DBUS_OBJECT_SKELETON(ddc),
+        G_DBUS_INTERFACE_SKELETON(ddc->iface_touch));
+
+    for (i = 0; i < INPUT_EVENT_SLOTS_MAX; i++) {
+        struct touch_slot *slot = &touch_slots[i];
+        slot->tracking_id = -1;
+    }
+
+    qemu_console_register_listener(con, &ddc->dcl, &dbus_console_dcl_ops);
     ddc->mouse_mode_notifier.notify = dbus_mouse_mode_change;
     qemu_add_mouse_mode_change_notifier(&ddc->mouse_mode_notifier);
+    dbus_mouse_update_is_absolute(ddc);
+
+    ddc->iface_ui_info = qemu_dbus_display1_uiinfo_skeleton_new();
+    qemu_dbus_display1_uiinfo_set_supported(ddc->iface_ui_info,
+        qemu_console_ui_info_supported(ddc->dcl.con));
+    g_object_connect(ddc->iface_ui_info,
+        "swapped-signal::handle-get", dbus_ui_info_get, ddc,
+        "swapped-signal::handle-apply", dbus_ui_info_apply, ddc,
+        NULL);
+    g_dbus_object_skeleton_add_interface(G_DBUS_OBJECT_SKELETON(ddc),
+        G_DBUS_INTERFACE_SKELETON(ddc->iface_ui_info));
 
     return ddc;
 }

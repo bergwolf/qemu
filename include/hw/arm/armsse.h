@@ -11,12 +11,16 @@
 
 /*
  * This is a model of the Arm "Subsystems for Embedded" family of
- * hardware, which include the IoT Kit and the SSE-050, SSE-100 and
- * SSE-200. Currently we model:
+ * hardware, which include the IoT Kit and the SSE-050, SSE-100,
+ * SSE-200, SSE-300, and SSE-310. Currently we model:
  *  - the Arm IoT Kit which is documented in
  *    https://developer.arm.com/documentation/ecm0601256/latest
  *  - the SSE-200 which is documented in
  *    https://developer.arm.com/documentation/101104/latest/
+ *  - the SSE-300 which is documented in
+ *    https://support.arm.com/documentation/101773/latest/
+ *  - the SSE-310 which is documented in
+ *    https://support.arm.com/documentation/102778/latest/
  *
  * The IoTKit contains:
  *  a Cortex-M33
@@ -56,6 +60,9 @@
  *    (matching the hardware) is that for CPU0 in an IoTKit and CPU1 in an
  *    SSE-200 both are present; CPU0 in an SSE-200 has neither.
  *    Since the IoTKit has only one CPU, it does not have the CPU1_* properties.
+ *  + QOM properties "CPU0_MPU_NS", "CPU0_MPU_S", "CPU1_MPU_NS" and "CPU1_MPU_S"
+ *    which set the number of MPU regions on the CPUs. If there is only one
+ *    CPU the CPU1 properties are not present.
  *  + Named GPIO inputs "EXP_IRQ" 0..n are the expansion interrupts for CPU 0,
  *    which are wired to its NVIC lines 32 .. n+32
  *  + Named GPIO inputs "EXP_CPU1_IRQ" 0..n are the expansion interrupts for
@@ -90,7 +97,7 @@
 #ifndef ARMSSE_H
 #define ARMSSE_H
 
-#include "hw/sysbus.h"
+#include "hw/core/sysbus.h"
 #include "hw/arm/armv7m.h"
 #include "hw/misc/iotkit-secctl.h"
 #include "hw/misc/tz-ppc.h"
@@ -106,8 +113,8 @@
 #include "hw/misc/armsse-mhu.h"
 #include "hw/misc/armsse-cpu-pwrctrl.h"
 #include "hw/misc/unimp.h"
-#include "hw/or-irq.h"
-#include "hw/clock.h"
+#include "hw/core/or-irq.h"
+#include "hw/core/clock.h"
 #include "hw/core/split-irq.h"
 #include "hw/cpu/cluster.h"
 #include "qom/object.h"
@@ -124,6 +131,7 @@ OBJECT_DECLARE_TYPE(ARMSSE, ARMSSEClass,
 #define TYPE_IOTKIT "iotkit"
 #define TYPE_SSE200 "sse-200"
 #define TYPE_SSE300 "sse-300"
+#define TYPE_SSE310 "sse-310"
 
 /* We have an IRQ splitter and an OR gate input for each external PPC
  * and the 2 internal PPCs
@@ -155,12 +163,12 @@ struct ARMSSE {
     TZPPC apb_ppc[NUM_INTERNAL_PPCS];
     TZMPC mpc[IOTS_NUM_MPC];
     CMSDKAPBTimer timer[3];
-    qemu_or_irq ppc_irq_orgate;
+    OrIRQState ppc_irq_orgate;
     SplitIRQ sec_resp_splitter;
     SplitIRQ ppc_irq_splitter[NUM_PPCS];
     SplitIRQ mpc_irq_splitter[IOTS_NUM_EXP_MPC + IOTS_NUM_MPC];
-    qemu_or_irq mpc_irq_orgate;
-    qemu_or_irq nmi_orgate;
+    OrIRQState mpc_irq_orgate;
+    OrIRQState nmi_orgate;
 
     SplitIRQ cpu_irq_splitter[NUM_SSE_IRQS];
 
@@ -221,6 +229,8 @@ struct ARMSSE {
     uint32_t exp_numirq;
     uint32_t sram_addr_width;
     uint32_t init_svtor;
+    uint32_t cpu_mpu_ns[SSE_MAX_CPUS];
+    uint32_t cpu_mpu_s[SSE_MAX_CPUS];
     bool cpu_fpu[SSE_MAX_CPUS];
     bool cpu_dsp[SSE_MAX_CPUS];
 };

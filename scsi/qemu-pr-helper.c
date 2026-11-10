@@ -36,7 +36,7 @@
 #include <mpath_persist.h>
 #endif
 
-#include "qemu-common.h"
+#include "qemu/help-texts.h"
 #include "qapi/error.h"
 #include "qemu/cutils.h"
 #include "qemu/main-loop.h"
@@ -47,12 +47,11 @@
 #include "qemu/log.h"
 #include "qemu/systemd.h"
 #include "qapi/util.h"
-#include "qapi/qmp/qstring.h"
+#include "qobject/qstring.h"
 #include "io/channel-socket.h"
 #include "trace/control.h"
-#include "qemu-version.h"
+#include "qemu/version.h"
 
-#include "block/aio.h"
 #include "block/thread-pool.h"
 
 #include "scsi/constants.h"
@@ -77,8 +76,10 @@ static int gid = -1;
 
 static void compute_default_paths(void)
 {
-    socket_path = qemu_get_local_state_pathname("run/qemu-pr-helper.sock");
-    pidfile = qemu_get_local_state_pathname("run/qemu-pr-helper.pid");
+    g_autofree char *state = qemu_get_local_state_dir();
+
+    socket_path = g_build_filename(state, "run", "qemu-pr-helper.sock", NULL);
+    pidfile = g_build_filename(state, "run", "qemu-pr-helper.pid", NULL);
 }
 
 static void usage(const char *name)
@@ -175,10 +176,9 @@ static int do_sgio_worker(void *opaque)
     return status;
 }
 
-static int do_sgio(int fd, const uint8_t *cdb, uint8_t *sense,
-                    uint8_t *buf, int *sz, int dir)
+static int coroutine_fn do_sgio(int fd, const uint8_t *cdb, uint8_t *sense,
+                                uint8_t *buf, int *sz, int dir)
 {
-    ThreadPool *pool = aio_get_thread_pool(qemu_get_aio_context());
     int r;
 
     PRHelperSGIOData data = {
@@ -190,7 +190,7 @@ static int do_sgio(int fd, const uint8_t *cdb, uint8_t *sense,
         .dir = dir,
     };
 
-    r = thread_pool_submit_co(pool, do_sgio_worker, &data);
+    r = thread_pool_submit_co(do_sgio_worker, &data);
     *sz = data.sz;
     return r;
 }
@@ -279,11 +279,7 @@ void put_multipath_config(struct config *conf)
 static void multipath_pr_init(void)
 {
     udev = udev_new();
-#ifdef CONFIG_MPATH_NEW_API
     multipath_conf = mpath_lib_init();
-#else
-    mpath_lib_init(udev);
-#endif
 }
 
 static int is_mpath(int fd)
@@ -318,7 +314,7 @@ static SCSISense mpath_generic_sense(int r)
     }
 }
 
-static int mpath_reconstruct_sense(int fd, int r, uint8_t *sense)
+static int coroutine_fn mpath_reconstruct_sense(int fd, int r, uint8_t *sense)
 {
     switch (r) {
     case MPATH_PR_SUCCESS:
@@ -370,8 +366,8 @@ static int mpath_reconstruct_sense(int fd, int r, uint8_t *sense)
     }
 }
 
-static int multipath_pr_in(int fd, const uint8_t *cdb, uint8_t *sense,
-                           uint8_t *data, int sz)
+static int coroutine_fn multipath_pr_in(int fd, const uint8_t *cdb, uint8_t *sense,
+                                        uint8_t *data, int sz)
 {
     int rq_servact = cdb[1];
     struct prin_resp resp;
@@ -425,8 +421,8 @@ static int multipath_pr_in(int fd, const uint8_t *cdb, uint8_t *sense,
     return mpath_reconstruct_sense(fd, r, sense);
 }
 
-static int multipath_pr_out(int fd, const uint8_t *cdb, uint8_t *sense,
-                            const uint8_t *param, int sz)
+static int coroutine_fn multipath_pr_out(int fd, const uint8_t *cdb, uint8_t *sense,
+                                         const uint8_t *param, int sz)
 {
     int rq_servact = cdb[1];
     int rq_scope = cdb[2] >> 4;
@@ -541,10 +537,119 @@ static int multipath_pr_out(int fd, const uint8_t *cdb, uint8_t *sense,
                                      paramp, noisy, verbose);
     return mpath_reconstruct_sense(fd, r, sense);
 }
+
+/* Get the device-mapper device name given its block device fd */
+static char *get_dm_name(int fd, Error **errp)
+{
+    struct stat st;
+    int ret;
+
+    assert(is_mpath(fd));
+
+    ret = fstat(fd, &st);
+    if (ret != 0) {
+        error_setg_errno(errp, errno, "fstat failed on fd %d", fd);
+        return NULL;
+    }
+
+    return g_strdup_printf("dm-%u", minor(st.st_rdev));
+}
+
+/* Perform a multipathd command */
+static bool multipathd_cmd(int fd, const char *cmd, Error **errp)
+{
+    const unsigned int timeout_ms = 60000;
+    g_autofree char *reply = NULL;
+    int last_errno;
+    int ret;
+
+    ret = mpath_process_cmd(fd, cmd, &reply, timeout_ms);
+    last_errno = errno;
+    if (reply && strcmp(reply, "ok\n") != 0) {
+        error_setg(errp, "mpath_process_cmd(%d, \"%s\") replied \"%s\"",
+                   fd, cmd, reply);
+        return false;
+    }
+    if (ret == -1) {
+        /*
+         * It should already be NULL but the mpath_process_cmd() documentation
+         * only defines it when the function returns success, so don't depend
+         * on its value when ret == -1.
+         */
+        reply = NULL;
+
+        error_setg_errno(errp, last_errno,
+                         "mpath_process_cmd(%d, \"%s\") failed",
+                         fd, cmd);
+        return false;
+    }
+    return true;
+}
+
+/* Unregister so this I_T nexus has no key registered anymore */
+static int coroutine_fn multipath_pr_cleanup_unregister(int fd, uint8_t *sense,
+                                                        Error **errp)
+{
+    uint8_t cdb[PR_HELPER_CDB_SIZE] = {};
+    uint8_t param[PR_OUT_FIXED_PARAM_SIZE] = {};
+
+    /* Fill in CDB */
+    cdb[0] = PERSISTENT_RESERVE_OUT;               /* OPERATION CODE */
+    cdb[1] = PRO_REGISTER_AND_IGNORE_EXISTING_KEY; /* SERVICE ACTION */
+    stl_be_p(&cdb[5], sizeof(param));              /* PARAMETER LIST LENGTH */
+
+    /* The parameter list is all zeroes, so there is nothing to fill in */
+
+    return multipath_pr_out(fd, cdb, sense, param, sizeof(param));
+}
+
+/*
+ * A special version of REGISTER AND IGNORE EXISTING KEY with sark=0 to
+ * unregister the key without triggering multipathd's preemption. This succeeds
+ * when no key is registered too. This is essential so the migration source
+ * cleans up its registered key without multipathd preempting the destination
+ * host.
+ */
+static int coroutine_fn multipath_pr_cleanup(int bdev_fd, uint8_t *sense,
+                                             Error **errp)
+{
+    g_autofree char *bdev_dm_name = get_dm_name(bdev_fd, errp);
+    g_autofree char *cmd = NULL;
+    int multipathd_fd;
+
+    if (bdev_dm_name == NULL) {
+        return -1;
+    }
+
+    /* First make multipathd forget the key and reservation state */
+    multipathd_fd = mpath_connect();
+    if (multipathd_fd == -1) {
+        error_setg_errno(errp, errno, "mpath_connect() failed");
+        return -1;
+    }
+
+    cmd = g_strdup_printf("unsetprkey map %s", bdev_dm_name);
+    if (!multipathd_cmd(multipathd_fd, cmd, errp)) {
+        mpath_disconnect(multipathd_fd);
+        return -1;
+    }
+
+    g_free(cmd);
+    cmd = g_strdup_printf("unsetprstatus map %s", bdev_dm_name);
+    if (!multipathd_cmd(multipathd_fd, cmd, errp)) {
+        mpath_disconnect(multipathd_fd);
+        return -1;
+    }
+
+    mpath_disconnect(multipathd_fd);
+
+    /* Now unregister the key at the SCSI level */
+    return multipath_pr_cleanup_unregister(bdev_fd, sense, errp);
+}
 #endif
 
-static int do_pr_in(int fd, const uint8_t *cdb, uint8_t *sense,
-                    uint8_t *data, int *resp_sz)
+static int coroutine_fn do_pr_in(int fd, const uint8_t *cdb, uint8_t *sense,
+                                 uint8_t *data, int *resp_sz)
 {
 #ifdef CONFIG_MPATH
     if (is_mpath(fd)) {
@@ -561,8 +666,8 @@ static int do_pr_in(int fd, const uint8_t *cdb, uint8_t *sense,
                    SG_DXFER_FROM_DEV);
 }
 
-static int do_pr_out(int fd, const uint8_t *cdb, uint8_t *sense,
-                     const uint8_t *param, int sz)
+static int coroutine_fn do_pr_out(int fd, const uint8_t *cdb, uint8_t *sense,
+                                  const uint8_t *param, int sz)
 {
     int resp_sz;
 
@@ -580,6 +685,21 @@ static int do_pr_out(int fd, const uint8_t *cdb, uint8_t *sense,
     resp_sz = sz;
     return do_sgio(fd, cdb, sense, (uint8_t *)param, &resp_sz,
                    SG_DXFER_TO_DEV);
+}
+
+static int coroutine_fn do_pr_cleanup(int fd, uint8_t *sense, Error **errp)
+{
+    if ((fcntl(fd, F_GETFL) & O_ACCMODE) == O_RDONLY) {
+        scsi_build_sense(sense, SENSE_CODE(INVALID_OPCODE));
+        return CHECK_CONDITION;
+    }
+
+#ifdef CONFIG_MPATH
+    if (is_mpath(fd)) {
+        return multipath_pr_cleanup(fd, sense, errp);
+    }
+#endif
+    return GOOD;
 }
 
 /* Client */
@@ -612,7 +732,7 @@ static int coroutine_fn prh_read(PRHelperClient *client, void *buf, int sz,
         iov.iov_base = buf;
         iov.iov_len = sz;
         n_read = qio_channel_readv_full(QIO_CHANNEL(client->ioc), &iov, 1,
-                                        &fds, &nfds, errp);
+                                        &fds, &nfds, 0, errp);
 
         if (n_read == QIO_CHANNEL_ERR_BLOCK) {
             qio_channel_yield(QIO_CHANNEL(client->ioc), G_IO_IN);
@@ -671,7 +791,8 @@ static int coroutine_fn prh_read_request(PRHelperClient *client,
     }
 
     if (req->cdb[0] != PERSISTENT_RESERVE_OUT &&
-        req->cdb[0] != PERSISTENT_RESERVE_IN) {
+        req->cdb[0] != PERSISTENT_RESERVE_IN &&
+        req->cdb[0] != PR_HELPER_CLEANUP) {
         error_setg(errp, "Invalid CDB, closing socket.");
         goto out_close;
     }
@@ -707,7 +828,8 @@ static int coroutine_fn prh_write_response(PRHelperClient *client,
     ssize_t r;
     size_t sz;
 
-    if (req->cdb[0] == PERSISTENT_RESERVE_IN && resp->result == GOOD) {
+    if (req->cdb[0] == PERSISTENT_RESERVE_IN &&
+        resp->result == GOOD) {
         assert(resp->sz <= req->sz && resp->sz <= sizeof(client->data));
     } else {
         assert(resp->sz == 0);
@@ -736,15 +858,15 @@ static void coroutine_fn prh_co_entry(void *opaque)
     uint32_t flags;
     int r;
 
-    qio_channel_set_blocking(QIO_CHANNEL(client->ioc),
-                             false, NULL);
-    qio_channel_attach_aio_context(QIO_CHANNEL(client->ioc),
-                                   qemu_get_aio_context());
+    if (!qio_channel_set_blocking(QIO_CHANNEL(client->ioc),
+                                  false, &local_err)) {
+        goto out;
+    }
 
-    /* A very simple negotiation for future extensibility.  No features
-     * are defined so write 0.
-     */
-    flags = cpu_to_be32(0);
+    qio_channel_set_follow_coroutine_ctx(QIO_CHANNEL(client->ioc), true);
+
+    /* A very simple negotiation for future extensibility */
+    flags = cpu_to_be32(PR_HELPER_FEATURE_CLEANUP);
     r = qio_channel_write_all(QIO_CHANNEL(client->ioc),
                              (char *) &flags, sizeof(flags), NULL);
     if (r < 0) {
@@ -753,7 +875,7 @@ static void coroutine_fn prh_co_entry(void *opaque)
 
     r = qio_channel_read_all(QIO_CHANNEL(client->ioc),
                              (char *) &flags, sizeof(flags), NULL);
-    if (be32_to_cpu(flags) != 0 || r < 0) {
+    if ((be32_to_cpu(flags) & ~PR_HELPER_FEATURE_CLEANUP) != 0 || r < 0) {
         goto out;
     }
 
@@ -768,15 +890,24 @@ static void coroutine_fn prh_co_entry(void *opaque)
         }
 
         num_active_sockets++;
-        if (req.cdb[0] == PERSISTENT_RESERVE_OUT) {
+        switch (req.cdb[0]) {
+        case PERSISTENT_RESERVE_OUT:
             r = do_pr_out(req.fd, req.cdb, resp.sense,
                           client->data, sz);
             resp.sz = 0;
-        } else {
+            break;
+        case PERSISTENT_RESERVE_IN:
             resp.sz = sizeof(client->data);
             r = do_pr_in(req.fd, req.cdb, resp.sense,
                          client->data, &resp.sz);
             resp.sz = MIN(resp.sz, sz);
+            break;
+        case PR_HELPER_CLEANUP:
+            r = do_pr_cleanup(req.fd, resp.sense, &local_err);
+            resp.sz = 0;
+            break;
+        default:
+            abort();
         }
         num_active_sockets--;
         close(req.fd);
@@ -790,6 +921,7 @@ static void coroutine_fn prh_co_entry(void *opaque)
         }
     }
 
+out:
     if (local_err) {
         if (verbose == 0) {
             error_free(local_err);
@@ -798,8 +930,6 @@ static void coroutine_fn prh_co_entry(void *opaque)
         }
     }
 
-out:
-    qio_channel_detach_aio_context(QIO_CHANNEL(client->ioc));
     object_unref(OBJECT(client->ioc));
     g_free(client);
 }
@@ -1001,7 +1131,7 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
     trace_init_file();
-    qemu_set_log(LOG_TRACE);
+    qemu_set_log(LOG_TRACE, &error_fatal);
 
 #ifdef CONFIG_MPATH
     dm_init();

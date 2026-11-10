@@ -18,5 +18,13 @@ config WDT_DIAG288
 config WDT_IMX2
     bool
 
+config K230_WDT
+    bool
+    select PTIMER
+
 config WDT_SBSA
     bool
+
+config ALLWINNER_WDT
+    bool
+    select PTIMER

@@ -24,13 +24,10 @@ import difflib
 import subprocess
 import contextlib
 import json
-import termios
+import shutil
 import sys
-from multiprocessing import Pool
-from contextlib import contextmanager
-from typing import List, Optional, Iterator, Any, Sequence, Dict, \
-        ContextManager
-
+from multiprocessing import get_context
+from typing import List, Optional, Any, Sequence, Dict
 from testenv import TestEnv
 
 
@@ -55,23 +52,7 @@ def file_diff(file1: str, file2: str) -> List[str]:
         return res
 
 
-# We want to save current tty settings during test run,
-# since an aborting qemu call may leave things screwed up.
-@contextmanager
-def savetty() -> Iterator[None]:
-    isterm = sys.stdin.isatty()
-    if isterm:
-        fd = sys.stdin.fileno()
-        attr = termios.tcgetattr(fd)
-
-    try:
-        yield
-    finally:
-        if isterm:
-            termios.tcsetattr(fd, termios.TCSADRAIN, attr)
-
-
-class LastElapsedTime(ContextManager['LastElapsedTime']):
+class LastElapsedTime(contextlib.AbstractContextManager['LastElapsedTime']):
     """ Cache for elapsed time for tests, to show it during new test run
 
     It is safe to use get() at any time.  To use update(), you must either
@@ -126,8 +107,8 @@ class TestResult:
         self.interrupted = interrupted
 
 
-class TestRunner(ContextManager['TestRunner']):
-    shared_self = None
+class TestRunner(contextlib.AbstractContextManager['TestRunner']):
+    shared_self: Optional['TestRunner'] = None
 
     @staticmethod
     def proc_run_test(test: str, test_field_width: int) -> TestResult:
@@ -144,7 +125,7 @@ class TestRunner(ContextManager['TestRunner']):
         assert TestRunner.shared_self is None
         TestRunner.shared_self = self
 
-        with Pool(jobs) as p:
+        with get_context('fork').Pool(jobs) as p:
             results = p.starmap(self.proc_run_test,
                                 zip(tests, [test_field_width] * len(tests)))
 
@@ -168,7 +149,6 @@ class TestRunner(ContextManager['TestRunner']):
         self._stack = contextlib.ExitStack()
         self._stack.enter_context(self.env)
         self._stack.enter_context(self.last_elapsed)
-        self._stack.enter_context(savetty())
         return self
 
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
@@ -194,7 +174,7 @@ class TestRunner(ContextManager['TestRunner']):
             elif status == 'fail':
                 print(f'not ok {self.env.imgfmt} {test}')
             elif status == 'not run':
-                print(f'ok {self.env.imgfmt} {test} # SKIP')
+                print(f'ok {self.env.imgfmt} {test} # SKIP {description}')
             return
 
         if lasttime:
@@ -246,22 +226,17 @@ class TestRunner(ContextManager['TestRunner']):
 
         return f'{test}.out'
 
-    def do_run_test(self, test: str, mp: bool) -> TestResult:
+    def do_run_test(self, test: str) -> TestResult:
         """
         Run one test
 
         :param test: test file path
-        :param mp: if true, we are in a multiprocessing environment, use
-                   personal subdirectories for test run
 
         Note: this method may be called from subprocess, so it does not
         change ``self`` object in any way!
         """
 
         f_test = Path(test)
-        f_bad = Path(f_test.name + '.out.bad')
-        f_notrun = Path(f_test.name + '.notrun')
-        f_casenotrun = Path(f_test.name + '.casenotrun')
         f_reference = Path(self.find_reference(test))
 
         if not f_test.exists():
@@ -276,21 +251,40 @@ class TestRunner(ContextManager['TestRunner']):
                               description='No qualified output '
                                           f'(expected {f_reference})')
 
-        for p in (f_bad, f_notrun, f_casenotrun):
-            silent_unlink(p)
-
         args = [str(f_test.resolve())]
         env = self.env.prepare_subprocess(args)
-        if mp:
-            # Split test directories, so that tests running in parallel don't
-            # break each other.
-            for d in ['TEST_DIR', 'SOCK_DIR']:
-                env[d] = os.path.join(env[d], f_test.name)
-                Path(env[d]).mkdir(parents=True, exist_ok=True)
+
+        # Split test directories, so that tests running in parallel don't
+        # break each other.
+        for d in ['TEST_DIR', 'SOCK_DIR']:
+            env[d] = os.path.join(
+                env[d],
+                f"{self.env.imgfmt}-{self.env.imgproto}-{f_test.name}")
+            Path(env[d]).mkdir(parents=True, exist_ok=True)
+
+        test_dir = env['TEST_DIR']
+        f_asan = Path(test_dir, f_test.name + '.out.asan')
+        f_bad = Path(test_dir, f_test.name + '.out.bad')
+        f_notrun = Path(test_dir, f_test.name + '.notrun')
+        f_casenotrun = Path(test_dir, f_test.name + '.casenotrun')
+
+        env['ASAN_OPTIONS'] = f'detect_leaks=0:log_path={f_asan}'
+
+        def unlink_asan():
+            with os.scandir(test_dir) as it:
+                for entry in it:
+                    if entry.name.startswith(f_asan.name):
+                        os.unlink(entry)
+
+        unlink_asan()
+
+        for p in (f_notrun, f_casenotrun):
+            silent_unlink(p)
 
         t0 = time.time()
         with f_bad.open('w', encoding="utf-8") as f:
             with subprocess.Popen(args, cwd=str(f_test.parent), env=env,
+                                  stdin=subprocess.DEVNULL,
                                   stdout=f, stderr=subprocess.STDOUT) as proc:
                 try:
                     proc.wait()
@@ -320,10 +314,16 @@ class TestRunner(ContextManager['TestRunner']):
 
         diff = file_diff(str(f_reference), str(f_bad))
         if diff:
+            if os.environ.get("QEMU_IOTESTS_REGEN", None) is not None:
+                shutil.copyfile(str(f_bad), str(f_reference))
+                print("########################################")
+                print("#####    REFERENCE FILE UPDATED    #####")
+                print("########################################")
             return TestResult(status='fail', elapsed=elapsed,
                               description=f'output mismatch (see {f_bad})',
                               diff=diff, casenotrun=casenotrun)
         else:
+            unlink_asan()
             f_bad.unlink()
             return TestResult(status='pass', elapsed=elapsed,
                               casenotrun=casenotrun)
@@ -353,8 +353,11 @@ class TestRunner(ContextManager['TestRunner']):
                                      starttime=start,
                                      lasttime=last_el,
                                      end = '\n' if mp else '\r')
+        else:
+            testname = os.path.basename(test)
+            print(f'# running {self.env.imgfmt} {testname}')
 
-        res = self.do_run_test(test, mp)
+        res = self.do_run_test(test)
 
         end = datetime.datetime.now().strftime('%H:%M:%S')
         self.test_print_one_line(test=test,
@@ -365,19 +368,27 @@ class TestRunner(ContextManager['TestRunner']):
                                  description=res.description)
 
         if res.casenotrun:
-            print(res.casenotrun)
+            if self.tap:
+                print('#' + res.casenotrun.replace('\n', '\n#'))
+            else:
+                print(res.casenotrun)
 
+        sys.stdout.flush()
         return res
 
-    def run_tests(self, tests: List[str], jobs: int = 1) -> bool:
+    def run_tests(self, tests: List[str], jobs: int = 1,
+                  quiet: bool = False) -> bool:
         n_run = 0
         failed = []
         notrun = []
         casenotrun = []
 
         if self.tap:
-            self.env.print_env('# ')
-        else:
+            print('TAP version 13')
+            if not quiet:
+                self.env.print_env('# ')
+            print('1..%d' % len(tests))
+        elif not quiet:
             self.env.print_env()
 
         test_field_width = max(len(os.path.basename(t)) for t in tests) + 2

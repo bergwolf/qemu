@@ -2,13 +2,13 @@ roms = []
 if unpack_edk2_blobs
   fds = [
     'edk2-aarch64-code.fd',
-    'edk2-arm-code.fd',
-    'edk2-arm-vars.fd',
-    'edk2-i386-code.fd',
-    'edk2-i386-secure-code.fd',
-    'edk2-i386-vars.fd',
+    'edk2-aarch64-vars.fd',
+    'edk2-riscv64-code.fd',
+    'edk2-riscv64-vars.fd',
     'edk2-x86_64-code.fd',
     'edk2-x86_64-secure-code.fd',
+    'edk2-loongarch64-code.fd',
+    'edk2-loongarch64-vars.fd',
   ]
 
   foreach f : fds
@@ -23,12 +23,12 @@ if unpack_edk2_blobs
   endforeach
 endif
 
-blobs = files(
+blobs = [
+  'ast27x0_bootrom.bin',
   'bios.bin',
   'bios-256k.bin',
   'bios-microvm.bin',
   'qboot.rom',
-  'sgabios.bin',
   'vgabios.bin',
   'vgabios-cirrus.bin',
   'vgabios-stdvga.bin',
@@ -58,36 +58,44 @@ blobs = files(
   'efi-e1000e.rom',
   'efi-vmxnet3.rom',
   'qemu-nsis.bmp',
-  'bamboo.dtb',
-  'canyonlands.dtb',
-  'petalogix-s3adsp1800.dtb',
-  'petalogix-ml605.dtb',
-  'multiboot.bin',
   'multiboot_dma.bin',
-  'linuxboot.bin',
   'linuxboot_dma.bin',
   'kvmvapic.bin',
   'pvh.bin',
   's390-ccw.img',
-  's390-netboot.img',
   'slof.bin',
   'skiboot.lid',
+  'pnv-pnor.bin',
   'palcode-clipper',
   'u-boot.e500',
-  'u-boot-sam460-20100605.bin',
+  'u-boot-sam460.bin',
   'qemu_vga.ndrv',
   'edk2-licenses.txt',
   'hppa-firmware.img',
+  'hppa-firmware64.img',
+  'hexagon_booter_qcs6490_cdsp',
+  'hexagon_loadlinux_qcs6490_cdsp',
+  'hexagon_booter_sm8975_nsp',
+  'hexagon_loadlinux_sm8975_nsp',
+  'hexagon_booter_sa8775p_cdsp',
+  'hexagon_loadlinux_sa8775p_cdsp',
+  'hexagon_booter_sc8480xp_nsp0',
+  'hexagon_loadlinux_sc8480xp_nsp0',
+  'hexagon_booter_sa8797p_nsp0',
+  'hexagon_loadlinux_sa8797p_nsp0',
+  'hexagon-hypervisor-license.txt',
   'opensbi-riscv32-generic-fw_dynamic.bin',
   'opensbi-riscv64-generic-fw_dynamic.bin',
   'npcm7xx_bootrom.bin',
+  'npcm8xx_bootrom.bin',
   'vof.bin',
   'vof-nvram.bin',
-)
+]
 
 if get_option('install_blobs')
-  install_data(blobs, install_dir: qemu_datadir)
+  install_data(blobs, install_dir: qemu_datadir, install_mode: 'rw-r--r--')
 endif
 
 subdir('descriptors')
+subdir('dtb')
 subdir('keymaps')

@@ -1,24 +1,12 @@
 /*
- *  sys/user.h definitions
+ * sys/user.h definitions
  *
- *  Copyright (c) 2015 Stacey D. Son (sson at FreeBSD)
+ * Copyright (c) 2015 Stacey D. Son
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, see <http://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
-
-#ifndef _TARGET_OS_USER_H_
-#define _TARGET_OS_USER_H_
+#ifndef TARGET_OS_USER_H
+#define TARGET_OS_USER_H
 
 /*
  * from sys/priority.h
@@ -26,7 +14,7 @@
 struct target_priority {
     uint8_t     pri_class;      /* Scheduling class. */
     uint8_t     pri_level;      /* Normal priority level. */
-    uint8_t     pri_native;     /* Priority before propogation. */
+    uint8_t     pri_native;     /* Priority before propagation. */
     uint8_t     pri_user;       /* User priority based on p_cpu and p_nice. */
 };
 
@@ -309,21 +297,16 @@ struct target_kinfo_vmentry {
     uint32_t kve_vn_rdev_freebsd11;  /* Device id if device. */
     uint16_t kve_vn_mode;   /* File mode. */
     uint16_t kve_status;   /* Status flags. */
-#if (__FreeBSD_version >= 1300501 && __FreeBSD_version < 1400000) ||    \
-    __FreeBSD_version >= 1400009
     union {
         uint64_t _kve_vn_fsid;  /* dev_t of vnode location */
         uint64_t _kve_obj;  /* handle of anon obj */
     } kve_type_spec;
 #define kve_vn_fsid kve_type_spec._kve_vn_fsid
 #define kve_obj  kve_type_spec._kve_obj
-#else
-    uint64_t kve_vn_fsid;   /* dev_t of vnode location */
-#endif
     uint64_t kve_vn_rdev;   /* Device id if device. */
     int  _kve_ispare[8];  /* Space for more stuff. */
     /* Truncated before copyout in sysctl */
     char  kve_path[PATH_MAX];  /* Path to VM obj, if any. */
 };
 
-#endif /* ! _TARGET_OS_USER_H_ */
+#endif /* TARGET_OS_USER_H */

@@ -1,9 +1,9 @@
 /*
  * Floating Point Convert Single to Various
  *
- * Copyright (c) 2019 Linaro
+ * Copyright (c) 2019, 2024 Linaro
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #include <stdio.h>
@@ -62,6 +62,7 @@ static void convert_single_to_double(float input)
 #define str(a) #a
 
 #define CONVERT_SINGLE_TO_INT(TYPE, FMT)                            \
+    __attribute__((no_sanitize("undefined")))                       \
     static void convert_single_to_ ## TYPE(float input)             \
     {                                                               \
         TYPE ## _t output;                                          \

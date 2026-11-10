@@ -1,9 +1,9 @@
 #ifndef SHPC_H
 #define SHPC_H
 
-#include "exec/memory.h"
-#include "hw/hotplug.h"
-#include "hw/pci/pci.h"
+#include "system/memory.h"
+#include "hw/core/hotplug.h"
+#include "hw/pci/pci_device.h"
 #include "migration/vmstate.h"
 
 struct SHPCDevice {
@@ -45,14 +45,14 @@ void shpc_free(PCIDevice *dev);
 void shpc_cap_write_config(PCIDevice *d, uint32_t addr, uint32_t val, int len);
 
 
-void shpc_device_plug_cb(HotplugHandler *hotplug_dev, DeviceState *dev,
+void shpc_device_plug_cb(const HotplugHandler *hotplug_dev, DeviceState *dev,
                          Error **errp);
-void shpc_device_unplug_cb(HotplugHandler *hotplug_dev, DeviceState *dev,
+void shpc_device_unplug_cb(const HotplugHandler *hotplug_dev, DeviceState *dev,
                            Error **errp);
-void shpc_device_unplug_request_cb(HotplugHandler *hotplug_dev,
+void shpc_device_unplug_request_cb(const HotplugHandler *hotplug_dev,
                                    DeviceState *dev, Error **errp);
 
-extern VMStateInfo shpc_vmstate_info;
+extern const VMStateInfo shpc_vmstate_info;
 #define SHPC_VMSTATE(_field, _type,  _test) \
     VMSTATE_BUFFER_UNSAFE_INFO_TEST(_field, _type, _test, 0, \
                                     shpc_vmstate_info, 0)

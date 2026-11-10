@@ -35,13 +35,16 @@
 #include "s390-ccw.h"
 #include "cio.h"
 #include "virtio.h"
+#include "virtio-ccw.h"
 #include "s390-time.h"
 
 #define DEFAULT_BOOT_RETRIES 10
 #define DEFAULT_TFTP_RETRIES 20
 
+/* Index 0 is reserved for default alias, start PXE cfg indices at 1 */
+#define PXECFG_MAX              (MAX_BOOT_ENTRIES - 1)
+
 extern char _start[];
-void write_iplb_location(void) {}
 
 #define KERNEL_ADDR             ((void *)0L)
 #define KERNEL_MAX_SIZE         ((long)_start)
@@ -50,11 +53,9 @@ void write_iplb_location(void) {}
 /* STSI 3.2.2 offset of first vmdb + offset of uuid inside vmdb */
 #define STSI322_VMDB_UUID_OFFSET ((8 + 12) * 4)
 
-char stack[PAGE_SIZE * 8] __attribute__((aligned(PAGE_SIZE)));
-IplParameterBlock iplb __attribute__((aligned(PAGE_SIZE)));
 static char cfgbuf[2048];
 
-static SubChannelId net_schid = { .one = 1 };
+SubChannelId net_schid = { .one = 1 };
 static uint8_t mac[6];
 static uint64_t dest_timer;
 
@@ -156,18 +157,9 @@ static int tftp_load(filename_ip_t *fnip, void *buffer, int len)
     return rc;
 }
 
-static int net_init(filename_ip_t *fn_ip)
+static int net_init_ip(filename_ip_t *fn_ip)
 {
     int rc;
-
-    memset(fn_ip, 0, sizeof(filename_ip_t));
-
-    rc = virtio_net_init(mac);
-    if (rc < 0) {
-        puts("Could not initialize network device");
-        return -101;
-    }
-    fn_ip->fd = rc;
 
     printf("  Using MAC address: %02x:%02x:%02x:%02x:%02x:%02x\n",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -180,6 +172,14 @@ static int net_init(filename_ip_t *fn_ip)
         if (fn_ip->ip_version == 4) {
             set_ipv4_address(fn_ip->own_ip);
         }
+    } else if (rc == -2) {
+        printf("ARP request to TFTP server (%d.%d.%d.%d) failed\n",
+               (fn_ip->server_ip >> 24) & 0xFF, (fn_ip->server_ip >> 16) & 0xFF,
+               (fn_ip->server_ip >>  8) & 0xFF, fn_ip->server_ip & 0xFF);
+        return -102;
+    } else if (rc == -4 || rc == -3) {
+        puts("Can't obtain TFTP server IP address");
+        return -107;
     } else {
         puts("Could not get IP address");
         return -101;
@@ -193,17 +193,6 @@ static int net_init(filename_ip_t *fn_ip)
         char ip6_str[40];
         ipv6_to_str(fn_ip->own_ip6.addr, ip6_str);
         printf("  Using IPv6 address: %s\n", ip6_str);
-    }
-
-    if (rc == -2) {
-        printf("ARP request to TFTP server (%d.%d.%d.%d) failed\n",
-               (fn_ip->server_ip >> 24) & 0xFF, (fn_ip->server_ip >> 16) & 0xFF,
-               (fn_ip->server_ip >>  8) & 0xFF, fn_ip->server_ip & 0xFF);
-        return -102;
-    }
-    if (rc == -4 || rc == -3) {
-        puts("Can't obtain TFTP server IP address");
-        return -107;
     }
 
     printf("  Using TFTP server: ");
@@ -224,11 +213,33 @@ static int net_init(filename_ip_t *fn_ip)
     return rc;
 }
 
+static int net_init(filename_ip_t *fn_ip)
+{
+    int rc;
+
+    memset(fn_ip, 0, sizeof(filename_ip_t));
+
+    rc = virtio_net_init(mac);
+    if (rc < 0) {
+        puts("Could not initialize network device");
+        return -101;
+    }
+    fn_ip->fd = rc;
+
+    rc = net_init_ip(fn_ip);
+    if (rc < 0) {
+        virtio_net_deinit();
+    }
+
+    return rc;
+}
+
 static void net_release(filename_ip_t *fn_ip)
 {
     if (fn_ip->ip_version == 4) {
         dhcp_send_release(fn_ip->fd);
     }
+    virtio_net_deinit();
 }
 
 /**
@@ -294,7 +305,7 @@ static int load_kernel_with_initrd(filename_ip_t *fn_ip,
     printf("Loading pxelinux.cfg entry '%s'\n", entry->label);
 
     if (!entry->kernel) {
-        printf("Kernel entry is missing!\n");
+        puts("Kernel entry is missing!\n");
         return -1;
     }
 
@@ -325,22 +336,64 @@ static int load_kernel_with_initrd(filename_ip_t *fn_ip,
     return rc;
 }
 
-#define MAX_PXELINUX_ENTRIES 16
+static int net_boot_menu(int num_ent, int def_ent,
+                         struct pl_cfg_entry *entries)
+{
+    bool valid_entries[MAX_BOOT_ENTRIES] = { false };
+    int idx;
+
+    puts("\ns390-ccw pxelinux.cfg boot menu:\n");
+    printf(" [0] default (%d)\n", def_ent + 1);
+    valid_entries[0] = true;
+
+    for (idx = 1; idx <= num_ent; idx++) {
+        printf(" [%d] %s\n", idx, entries[idx - 1].label);
+        valid_entries[idx] = true;
+    }
+    putchar('\n');
+
+    idx = menu_get_boot_index(valid_entries);
+    putchar('\n');
+
+    return idx;
+}
+
+static int net_select_and_load_kernel(filename_ip_t *fn_ip,
+                                      int num_ent, int selected,
+                                      struct pl_cfg_entry *entries)
+{
+    unsigned int loadparm = get_loadparm_index();
+
+    if (num_ent <= 0) {
+        return -1;
+    }
+
+    if (menu_is_enabled_enum() && num_ent > 1) {
+        loadparm = net_boot_menu(num_ent, selected, entries);
+    }
+
+    IPL_assert(loadparm <= num_ent,
+               "loadparm is set to an entry that is not available in the "
+               "pxelinux.cfg file!");
+
+    if (loadparm > 0) {
+        selected = loadparm - 1;
+    }
+
+    return load_kernel_with_initrd(fn_ip, &entries[selected]);
+}
 
 static int net_try_pxelinux_cfg(filename_ip_t *fn_ip)
 {
-    struct pl_cfg_entry entries[MAX_PXELINUX_ENTRIES];
+    struct pl_cfg_entry entries[PXECFG_MAX];
     int num_ent, def_ent = 0;
 
     num_ent = pxelinux_load_parse_cfg(fn_ip, mac, get_uuid(),
                                       DEFAULT_TFTP_RETRIES,
                                       cfgbuf, sizeof(cfgbuf),
-                                      entries, MAX_PXELINUX_ENTRIES, &def_ent);
-    if (num_ent > 0) {
-        return load_kernel_with_initrd(fn_ip, &entries[def_ent]);
-    }
+                                      entries, PXECFG_MAX, &def_ent);
 
-    return -1;
+    return net_select_and_load_kernel(fn_ip, num_ent, def_ent, entries);
 }
 
 /**
@@ -421,15 +474,13 @@ static int net_try_direct_tftp_load(filename_ip_t *fn_ip)
          * a magic comment string.
          */
         if (!strncasecmp("# pxelinux", cfgbuf, 10)) {
-            struct pl_cfg_entry entries[MAX_PXELINUX_ENTRIES];
+            struct pl_cfg_entry entries[PXECFG_MAX];
             int num_ent, def_ent = 0;
 
             num_ent = pxelinux_parse_cfg(cfgbuf, sizeof(cfgbuf), entries,
-                                         MAX_PXELINUX_ENTRIES, &def_ent);
-            if (num_ent <= 0) {
-                return -1;
-            }
-            return load_kernel_with_initrd(fn_ip, &entries[def_ent]);
+                                         PXECFG_MAX, &def_ent);
+            return net_select_and_load_kernel(fn_ip, num_ent, def_ent,
+                                              entries);
         }
     }
 
@@ -439,90 +490,29 @@ static int net_try_direct_tftp_load(filename_ip_t *fn_ip)
     return rc;
 }
 
-void write_subsystem_identification(void)
-{
-    SubChannelId *schid = (SubChannelId *) 184;
-    uint32_t *zeroes = (uint32_t *) 188;
-
-    *schid = net_schid;
-    *zeroes = 0;
-}
-
-static bool find_net_dev(Schib *schib, int dev_no)
-{
-    int i, r;
-
-    for (i = 0; i < 0x10000; i++) {
-        net_schid.sch_no = i;
-        r = stsch_err(net_schid, schib);
-        if (r == 3 || r == -EIO) {
-            break;
-        }
-        if (!schib->pmcw.dnv) {
-            continue;
-        }
-        enable_subchannel(net_schid);
-        if (!virtio_is_supported(net_schid)) {
-            continue;
-        }
-        if (virtio_get_device_type() != VIRTIO_ID_NET) {
-            continue;
-        }
-        if (dev_no < 0 || schib->pmcw.dev == dev_no) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-static void virtio_setup(void)
-{
-    Schib schib;
-    int ssid;
-    bool found = false;
-    uint16_t dev_no;
-
-    /*
-     * We unconditionally enable mss support. In every sane configuration,
-     * this will succeed; and even if it doesn't, stsch_err() can deal
-     * with the consequences.
-     */
-    enable_mss_facility();
-
-    if (store_iplb(&iplb)) {
-        IPL_assert(iplb.pbt == S390_IPL_TYPE_CCW, "IPL_TYPE_CCW expected");
-        dev_no = iplb.ccw.devno;
-        debug_print_int("device no. ", dev_no);
-        net_schid.ssid = iplb.ccw.ssid & 0x3;
-        debug_print_int("ssid ", net_schid.ssid);
-        found = find_net_dev(&schib, dev_no);
-    } else {
-        for (ssid = 0; ssid < 0x3; ssid++) {
-            net_schid.ssid = ssid;
-            found = find_net_dev(&schib, -1);
-            if (found) {
-                break;
-            }
-        }
-    }
-
-    IPL_assert(found, "No virtio net device found");
-}
-
-void main(void)
+int netmain(void)
 {
     filename_ip_t fn_ip;
     int rc, fnlen;
 
     sclp_setup();
-    sclp_print("Network boot starting...\n");
+    puts("Network boot starting...");
 
-    virtio_setup();
+    /*
+     * CCW devices require subchannel enumeration here.
+     * PCI devices don't need specific net setup; the virtio-net-pci devices
+     * still follow the regular Virtio, PCI, and generic network setup.
+     */
+    if (virtio_get_device()->ipl_type == S390_IPL_TYPE_CCW &&
+        !virtio_ccw_net_setup()) {
+        puts("No valid virtio ccw net device found.");
+        return -1;
+    }
 
     rc = net_init(&fn_ip);
     if (rc) {
-        panic("Network initialization failed. Halting.\n");
+        puts("Network initialization failed.");
+        return -1;
     }
 
     fnlen = strlen(fn_ip.filename);
@@ -536,9 +526,10 @@ void main(void)
     net_release(&fn_ip);
 
     if (rc > 0) {
-        sclp_print("Network loading done, starting kernel...\n");
+        puts("Network loading done, starting kernel...");
         jump_to_low_kernel();
     }
 
-    panic("Failed to load OS from network\n");
+    puts("Failed to load OS from network.");
+    return -1;
 }

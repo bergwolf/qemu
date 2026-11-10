@@ -32,25 +32,30 @@ DECLARE_INSTANCE_CHECKER(PnvHomer, PNV8_HOMER,
 #define TYPE_PNV9_HOMER TYPE_PNV_HOMER "-POWER9"
 DECLARE_INSTANCE_CHECKER(PnvHomer, PNV9_HOMER,
                          TYPE_PNV9_HOMER)
+#define TYPE_PNV10_HOMER TYPE_PNV_HOMER "-POWER10"
+DECLARE_INSTANCE_CHECKER(PnvHomer, PNV10_HOMER,
+                         TYPE_PNV10_HOMER)
 
 struct PnvHomer {
     DeviceState parent;
 
-    struct PnvChip *chip;
+    PnvChip *chip;
     MemoryRegion pba_regs;
-    MemoryRegion regs;
+    MemoryRegion mem;
+    hwaddr base;
 };
 
 
 struct PnvHomerClass {
     DeviceClass parent_class;
 
+    /* Get base address of HOMER memory */
+    hwaddr (*get_base)(PnvChip *chip);
+    /* Size of HOMER memory */
+    int size;
+
     int pba_size;
     const MemoryRegionOps *pba_ops;
-    int homer_size;
-    const MemoryRegionOps *homer_ops;
-
-    hwaddr core_max_base;
 };
 
 #endif /* PPC_PNV_HOMER_H */

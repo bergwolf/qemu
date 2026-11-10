@@ -49,6 +49,20 @@ static const cs_opt_skipdata cap_skipdata_s390x = {
     .callback = cap_skipdata_s390x_cb
 };
 
+/* Similarly for RISCV */
+static size_t CAPSTONE_API
+cap_skipdata_riscv_cb(const uint8_t *code, size_t code_size,
+                      size_t offset, void *user_data)
+{
+    /* See insn_len() from target/riscv/internals.h */
+    return (code[offset] & 3) == 3 ? 4 : 2;
+}
+
+static const cs_opt_skipdata cap_skipdata_riscv = {
+    .mnemonic = ".byte",
+    .callback = cap_skipdata_riscv_cb
+};
+
 /*
  * Initialize the Capstone library.
  *
@@ -76,7 +90,12 @@ static cs_err cap_disas_start(disassemble_info *info, csh *handle)
     cs_option(*handle, CS_OPT_SKIPDATA, CS_OPT_ON);
 
     switch (info->cap_arch) {
-    case CS_ARCH_SYSZ:
+    case CS_ARCH_RISCV:
+        cs_option(*handle, CS_OPT_SKIPDATA_SETUP,
+                  (uintptr_t)&cap_skipdata_riscv);
+        break;
+
+    case CS_ARCH_SYSTEMZ:
         cs_option(*handle, CS_OPT_SKIPDATA_SETUP,
                   (uintptr_t)&cap_skipdata_s390x);
         break;
@@ -107,8 +126,9 @@ static void cap_dump_insn_units(disassemble_info *info, cs_insn *insn,
 {
     fprintf_function print = info->fprintf_func;
     FILE *stream = info->stream;
+    int unit = MIN(info->cap_insn_unit, n - i);
 
-    switch (info->cap_insn_unit) {
+    switch (unit) {
     case 4:
         if (info->endian == BFD_ENDIAN_BIG) {
             for (; i < n; i += 4) {
@@ -139,6 +159,11 @@ static void cap_dump_insn_units(disassemble_info *info, cs_insn *insn,
             print(stream, " %02x", insn->bytes[i]);
         }
         break;
+    }
+
+    if (unit < info->cap_insn_unit) {
+        int width = (info->cap_insn_unit - unit) * 2;
+        print(stream, "%*s", width, "");
     }
 }
 
@@ -191,37 +216,43 @@ bool cap_disas_target(disassemble_info *info, uint64_t pc, size_t size)
         size_t tsize = MIN(sizeof(cap_buf) - csize, size);
         const uint8_t *cbuf = cap_buf;
 
-        info->read_memory_func(pc + csize, cap_buf + csize, tsize, info);
-        csize += tsize;
-        size -= tsize;
+        if (info->read_memory_func(pc + csize, cap_buf + csize, tsize, info) == 0) {
+            csize += tsize;
+            size -= tsize;
 
-        while (cs_disasm_iter(handle, &cbuf, &csize, &pc, insn)) {
-            cap_dump_insn(info, insn);
-        }
+            while (cs_disasm_iter(handle, &cbuf, &csize, &pc, insn)) {
+                cap_dump_insn(info, insn);
+            }
 
-        /* If the target memory is not consumed, go back for more... */
-        if (size != 0) {
+            /* If the target memory is not consumed, go back for more... */
+            if (size != 0) {
+                /*
+                 * ... taking care to move any remaining fractional insn
+                 * to the beginning of the buffer.
+                 */
+                if (csize != 0) {
+                    memmove(cap_buf, cbuf, csize);
+                }
+                continue;
+            }
+
             /*
-             * ... taking care to move any remaining fractional insn
-             * to the beginning of the buffer.
+             * Since the target memory is consumed, we should not have
+             * a remaining fractional insn.
              */
             if (csize != 0) {
-                memmove(cap_buf, cbuf, csize);
+                info->fprintf_func(info->stream,
+                                   "Disassembler disagrees with translator "
+                                   "over instruction decoding\n"
+                                   "Please report this to qemu-devel@nongnu.org\n");
             }
-            continue;
-        }
+            break;
 
-        /*
-         * Since the target memory is consumed, we should not have
-         * a remaining fractional insn.
-         */
-        if (csize != 0) {
+        } else {
             info->fprintf_func(info->stream,
-                "Disassembler disagrees with translator "
-                "over instruction decoding\n"
-                "Please report this to qemu-devel@nongnu.org\n");
+                               "0x%08" PRIx64 ": unable to read memory\n", pc);
+            break;
         }
-        break;
     }
 
     cs_close(&handle);
@@ -286,16 +317,23 @@ bool cap_disas_monitor(disassemble_info *info, uint64_t pc, int count)
 
         /* Make certain that we can make progress.  */
         assert(tsize != 0);
-        info->read_memory_func(pc + csize, cap_buf + csize, tsize, info);
-        csize += tsize;
+        if (info->read_memory_func(pc + csize, cap_buf + csize,
+                                   tsize, info) == 0)
+        {
+            csize += tsize;
 
-        if (cs_disasm_iter(handle, &cbuf, &csize, &pc, insn)) {
-            cap_dump_insn(info, insn);
-            if (--count <= 0) {
-                break;
+            if (cs_disasm_iter(handle, &cbuf, &csize, &pc, insn)) {
+                cap_dump_insn(info, insn);
+                if (--count <= 0) {
+                    break;
+                }
             }
+            memmove(cap_buf, cbuf, csize);
+        } else {
+            info->fprintf_func(info->stream,
+                               "0x%08" PRIx64 ": unable to read memory\n", pc);
+            break;
         }
-        memmove(cap_buf, cbuf, csize);
     }
 
     cs_close(&handle);

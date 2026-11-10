@@ -12,7 +12,7 @@
  */
 
 #include "qemu/osdep.h"
-#include "hw/sysbus.h"
+#include "hw/core/sysbus.h"
 #include "hw/misc/unimp.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
@@ -70,13 +70,12 @@ static void unimp_realize(DeviceState *dev, Error **errp)
     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->iomem);
 }
 
-static Property unimp_properties[] = {
+static const Property unimp_properties[] = {
     DEFINE_PROP_UINT64("size", UnimplementedDeviceState, size, 0),
     DEFINE_PROP_STRING("name", UnimplementedDeviceState, name),
-    DEFINE_PROP_END_OF_LIST(),
 };
 
-static void unimp_class_init(ObjectClass *klass, void *data)
+static void unimp_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
@@ -97,3 +96,23 @@ static void unimp_register_types(void)
 }
 
 type_init(unimp_register_types)
+
+void create_unimplemented_devices(Object *parentobj, MemoryRegion *container,
+                                  const UnimplementedDeviceConfig *devconfigs)
+{
+    const UnimplementedDeviceConfig *cfg;
+
+    for (cfg = devconfigs; cfg->qom_name; cfg++) {
+        DeviceState *dev = qdev_new(TYPE_UNIMPLEMENTED_DEVICE);
+        SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
+        object_property_add_child(parentobj, cfg->qom_name, OBJECT(dev));
+        qdev_prop_set_string(dev, "name", cfg->region_name);
+        qdev_prop_set_uint64(dev, "size", cfg->size);
+        sysbus_realize_and_unref(sbd, &error_fatal);
+
+        memory_region_add_subregion_overlap(container, cfg->offset,
+                                            sysbus_mmio_get_region(sbd, 0),
+                                            cfg->priority);
+    }
+}

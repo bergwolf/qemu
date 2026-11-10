@@ -18,8 +18,10 @@ Contents:
 
    target-arm
    target-avr
+   target-loongarch
    target-m68k
    target-mips
+   target-or1k
    target-ppc
    target-riscv
    target-rx
@@ -28,3 +30,4 @@ Contents:
    target-sparc64
    target-i386
    target-xtensa
+   target-hexagon

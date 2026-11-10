@@ -27,16 +27,17 @@
 #include "qapi/error.h"
 #include "qemu/cutils.h"
 #include "qemu/config-file.h"
+#include "block/block-io.h"
 #include "block/block_int.h"
 #include "block/qdict.h"
 #include "qemu/module.h"
 #include "qemu/option.h"
 #include "qapi/qapi-visit-block-core.h"
-#include "qapi/qmp/qdict.h"
-#include "qapi/qmp/qlist.h"
-#include "qapi/qmp/qstring.h"
+#include "qobject/qdict.h"
+#include "qobject/qlist.h"
+#include "qobject/qstring.h"
 #include "qapi/qobject-input-visitor.h"
-#include "sysemu/qtest.h"
+#include "system/qtest.h"
 
 /* All APIs are thread-safe */
 
@@ -94,6 +95,7 @@ typedef struct BlkdebugRule {
             int immediately;
             int once;
             int64_t offset;
+            int64_t delay_ns;
         } inject;
         struct {
             int new_state;
@@ -142,6 +144,10 @@ static QemuOptsList inject_error_opts = {
         {
             .name = "immediately",
             .type = QEMU_OPT_BOOL,
+        },
+        {
+            .name = "delay-ns",
+            .type = QEMU_OPT_NUMBER,
         },
         { /* end of list */ }
     },
@@ -215,6 +221,8 @@ static int add_rule(void *opaque, QemuOpts *opts, Error **errp)
         rule->options.inject.once  = qemu_opt_get_bool(opts, "once", 0);
         rule->options.inject.immediately =
             qemu_opt_get_bool(opts, "immediately", 0);
+        rule->options.inject.delay_ns =
+            qemu_opt_get_number(opts, "delay-ns", 0);
         sector = qemu_opt_get_number(opts, "sector", -1);
         rule->options.inject.offset =
             sector == -1 ? -1 : sector * BDRV_SECTOR_SIZE;
@@ -287,7 +295,7 @@ static int read_config(BDRVBlkdebugState *s, const char *filename,
     if (filename) {
         f = fopen(filename, "r");
         if (f == NULL) {
-            error_setg_errno(errp, errno, "Could not read blkdebug config file");
+            error_setg_file_open(errp, errno, filename);
             return -errno;
         }
 
@@ -297,9 +305,7 @@ static int read_config(BDRVBlkdebugState *s, const char *filename,
         }
     }
 
-    qemu_config_parse_qdict(options, config_groups, &local_err);
-    if (local_err) {
-        error_propagate(errp, local_err);
+    if (!qemu_config_parse_qdict(options, config_groups, errp)) {
         ret = -EINVAL;
         goto fail;
     }
@@ -503,14 +509,13 @@ static int blkdebug_open(BlockDriverState *bs, QDict *options, int flags,
     }
 
     /* Open the image file */
-    bs->file = bdrv_open_child(qemu_opt_get(opts, "x-image"), options, "image",
-                               bs, &child_of_bds,
-                               BDRV_CHILD_FILTERED | BDRV_CHILD_PRIMARY,
-                               false, errp);
-    if (!bs->file) {
-        ret = -EINVAL;
+    ret = bdrv_open_file_child(qemu_opt_get(opts, "x-image"), options, "image",
+                               bs, errp);
+    if (ret < 0) {
         goto out;
     }
+
+    bdrv_graph_rdlock_main_loop();
 
     bs->supported_write_flags = BDRV_REQ_WRITE_UNCHANGED |
         (BDRV_REQ_FUA & bs->file->bs->supported_write_flags);
@@ -524,7 +529,7 @@ static int blkdebug_open(BlockDriverState *bs, QDict *options, int flags,
     if (s->align && (s->align >= INT_MAX || !is_power_of_2(s->align))) {
         error_setg(errp, "Cannot meet constraints with align %" PRIu64,
                    s->align);
-        goto out;
+        goto out_rdlock;
     }
     align = MAX(s->align, bs->file->bs->bl.request_alignment);
 
@@ -534,7 +539,7 @@ static int blkdebug_open(BlockDriverState *bs, QDict *options, int flags,
          !QEMU_IS_ALIGNED(s->max_transfer, align))) {
         error_setg(errp, "Cannot meet constraints with max-transfer %" PRIu64,
                    s->max_transfer);
-        goto out;
+        goto out_rdlock;
     }
 
     s->opt_write_zero = qemu_opt_get_size(opts, "opt-write-zero", 0);
@@ -543,7 +548,7 @@ static int blkdebug_open(BlockDriverState *bs, QDict *options, int flags,
          !QEMU_IS_ALIGNED(s->opt_write_zero, align))) {
         error_setg(errp, "Cannot meet constraints with opt-write-zero %" PRIu64,
                    s->opt_write_zero);
-        goto out;
+        goto out_rdlock;
     }
 
     s->max_write_zero = qemu_opt_get_size(opts, "max-write-zero", 0);
@@ -553,7 +558,7 @@ static int blkdebug_open(BlockDriverState *bs, QDict *options, int flags,
                           MAX(s->opt_write_zero, align)))) {
         error_setg(errp, "Cannot meet constraints with max-write-zero %" PRIu64,
                    s->max_write_zero);
-        goto out;
+        goto out_rdlock;
     }
 
     s->opt_discard = qemu_opt_get_size(opts, "opt-discard", 0);
@@ -562,7 +567,7 @@ static int blkdebug_open(BlockDriverState *bs, QDict *options, int flags,
          !QEMU_IS_ALIGNED(s->opt_discard, align))) {
         error_setg(errp, "Cannot meet constraints with opt-discard %" PRIu64,
                    s->opt_discard);
-        goto out;
+        goto out_rdlock;
     }
 
     s->max_discard = qemu_opt_get_size(opts, "max-discard", 0);
@@ -572,12 +577,14 @@ static int blkdebug_open(BlockDriverState *bs, QDict *options, int flags,
                           MAX(s->opt_discard, align)))) {
         error_setg(errp, "Cannot meet constraints with max-discard %" PRIu64,
                    s->max_discard);
-        goto out;
+        goto out_rdlock;
     }
 
     bdrv_debug_event(bs, BLKDBG_NONE);
 
     ret = 0;
+out_rdlock:
+    bdrv_graph_rdunlock_main_loop();
 out:
     if (ret < 0) {
         qemu_mutex_destroy(&s->lock);
@@ -587,13 +594,14 @@ out:
     return ret;
 }
 
-static int rule_check(BlockDriverState *bs, uint64_t offset, uint64_t bytes,
-                      BlkdebugIOType iotype)
+static int coroutine_fn rule_check(BlockDriverState *bs, uint64_t offset,
+                                   uint64_t bytes, BlkdebugIOType iotype)
 {
     BDRVBlkdebugState *s = bs->opaque;
-    BlkdebugRule *rule = NULL;
+    BlkdebugRule *rule;
     int error;
     bool immediately;
+    int64_t delay_ns;
 
     qemu_mutex_lock(&s->lock);
     QSIMPLEQ_FOREACH(rule, &s->active_rules, active_next) {
@@ -608,13 +616,14 @@ static int rule_check(BlockDriverState *bs, uint64_t offset, uint64_t bytes,
         }
     }
 
-    if (!rule || !rule->options.inject.error) {
+    if (!rule) {
         qemu_mutex_unlock(&s->lock);
         return 0;
     }
 
     immediately = rule->options.inject.immediately;
     error = rule->options.inject.error;
+    delay_ns  = rule->options.inject.delay_ns;
 
     if (rule->options.inject.once) {
         QSIMPLEQ_REMOVE(&s->active_rules, rule, BlkdebugRule, active_next);
@@ -622,6 +631,10 @@ static int rule_check(BlockDriverState *bs, uint64_t offset, uint64_t bytes,
     }
 
     qemu_mutex_unlock(&s->lock);
+
+    if (delay_ns) {
+        qemu_co_sleep_ns(QEMU_CLOCK_REALTIME, delay_ns);
+    }
     if (!immediately) {
         aio_co_schedule(qemu_get_current_aio_context(), qemu_coroutine_self());
         qemu_coroutine_yield();
@@ -630,7 +643,7 @@ static int rule_check(BlockDriverState *bs, uint64_t offset, uint64_t bytes,
     return -error;
 }
 
-static int coroutine_fn
+static int coroutine_fn GRAPH_RDLOCK
 blkdebug_co_preadv(BlockDriverState *bs, int64_t offset, int64_t bytes,
                    QEMUIOVector *qiov, BdrvRequestFlags flags)
 {
@@ -651,7 +664,7 @@ blkdebug_co_preadv(BlockDriverState *bs, int64_t offset, int64_t bytes,
     return bdrv_co_preadv(bs->file, offset, bytes, qiov, flags);
 }
 
-static int coroutine_fn
+static int coroutine_fn GRAPH_RDLOCK
 blkdebug_co_pwritev(BlockDriverState *bs, int64_t offset, int64_t bytes,
                     QEMUIOVector *qiov, BdrvRequestFlags flags)
 {
@@ -672,7 +685,7 @@ blkdebug_co_pwritev(BlockDriverState *bs, int64_t offset, int64_t bytes,
     return bdrv_co_pwritev(bs->file, offset, bytes, qiov, flags);
 }
 
-static int blkdebug_co_flush(BlockDriverState *bs)
+static int GRAPH_RDLOCK coroutine_fn blkdebug_co_flush(BlockDriverState *bs)
 {
     int err = rule_check(bs, 0, 0, BLKDEBUG_IO_TYPE_FLUSH);
 
@@ -683,9 +696,9 @@ static int blkdebug_co_flush(BlockDriverState *bs)
     return bdrv_co_flush(bs->file->bs);
 }
 
-static int coroutine_fn blkdebug_co_pwrite_zeroes(BlockDriverState *bs,
-                                                  int64_t offset, int64_t bytes,
-                                                  BdrvRequestFlags flags)
+static int coroutine_fn GRAPH_RDLOCK
+blkdebug_co_pwrite_zeroes(BlockDriverState *bs, int64_t offset, int64_t bytes,
+                          BdrvRequestFlags flags)
 {
     uint32_t align = MAX(bs->bl.request_alignment,
                          bs->bl.pwrite_zeroes_alignment);
@@ -716,8 +729,8 @@ static int coroutine_fn blkdebug_co_pwrite_zeroes(BlockDriverState *bs,
     return bdrv_co_pwrite_zeroes(bs->file, offset, bytes, flags);
 }
 
-static int coroutine_fn blkdebug_co_pdiscard(BlockDriverState *bs,
-                                             int64_t offset, int64_t bytes)
+static int coroutine_fn GRAPH_RDLOCK
+blkdebug_co_pdiscard(BlockDriverState *bs, int64_t offset, int64_t bytes)
 {
     uint32_t align = bs->bl.pdiscard_alignment;
     int err;
@@ -750,13 +763,10 @@ static int coroutine_fn blkdebug_co_pdiscard(BlockDriverState *bs,
     return bdrv_co_pdiscard(bs->file, offset, bytes);
 }
 
-static int coroutine_fn blkdebug_co_block_status(BlockDriverState *bs,
-                                                 bool want_zero,
-                                                 int64_t offset,
-                                                 int64_t bytes,
-                                                 int64_t *pnum,
-                                                 int64_t *map,
-                                                 BlockDriverState **file)
+static int coroutine_fn GRAPH_RDLOCK
+blkdebug_co_block_status(BlockDriverState *bs, unsigned int mode,
+                         int64_t offset, int64_t bytes, int64_t *pnum,
+                         int64_t *map, BlockDriverState **file)
 {
     int err;
 
@@ -840,7 +850,8 @@ static void process_rule(BlockDriverState *bs, struct BlkdebugRule *rule,
     }
 }
 
-static void blkdebug_debug_event(BlockDriverState *bs, BlkdebugEvent event)
+static void coroutine_fn
+blkdebug_co_debug_event(BlockDriverState *bs, BlkdebugEvent event)
 {
     BDRVBlkdebugState *s = bs->opaque;
     struct BlkdebugRule *rule, *next;
@@ -970,12 +981,13 @@ static bool blkdebug_debug_is_suspended(BlockDriverState *bs, const char *tag)
     return false;
 }
 
-static int64_t blkdebug_getlength(BlockDriverState *bs)
+static int64_t coroutine_fn GRAPH_RDLOCK
+blkdebug_co_getlength(BlockDriverState *bs)
 {
-    return bdrv_getlength(bs->file->bs);
+    return bdrv_co_getlength(bs->file->bs);
 }
 
-static void blkdebug_refresh_filename(BlockDriverState *bs)
+static void GRAPH_RDLOCK blkdebug_refresh_filename(BlockDriverState *bs)
 {
     BDRVBlkdebugState *s = bs->opaque;
     const QDictEntry *e;
@@ -1074,12 +1086,12 @@ static BlockDriver bdrv_blkdebug = {
     .is_filter              = true,
 
     .bdrv_parse_filename    = blkdebug_parse_filename,
-    .bdrv_file_open         = blkdebug_open,
+    .bdrv_open              = blkdebug_open,
     .bdrv_close             = blkdebug_close,
     .bdrv_reopen_prepare    = blkdebug_reopen_prepare,
     .bdrv_child_perm        = blkdebug_child_perm,
 
-    .bdrv_getlength         = blkdebug_getlength,
+    .bdrv_co_getlength      = blkdebug_co_getlength,
     .bdrv_refresh_filename  = blkdebug_refresh_filename,
     .bdrv_refresh_limits    = blkdebug_refresh_limits,
 
@@ -1090,7 +1102,7 @@ static BlockDriver bdrv_blkdebug = {
     .bdrv_co_pdiscard       = blkdebug_co_pdiscard,
     .bdrv_co_block_status   = blkdebug_co_block_status,
 
-    .bdrv_debug_event           = blkdebug_debug_event,
+    .bdrv_co_debug_event        = blkdebug_co_debug_event,
     .bdrv_debug_breakpoint      = blkdebug_debug_breakpoint,
     .bdrv_debug_remove_breakpoint
                                 = blkdebug_debug_remove_breakpoint,

@@ -26,6 +26,7 @@ or vfio-ap is also available.
    s390x/css
    s390x/3270
    s390x/vfio-ccw
+   s390x/pcidevices
 
 Architectural features
 ======================
@@ -33,3 +34,6 @@ Architectural features
 .. toctree::
    s390x/bootdevices
    s390x/protvirt
+   s390x/cpu-topology
+   s390x/secure-ipl
+   s390x/cpacf

@@ -149,6 +149,7 @@
 #define MECHANISM_STATUS      0xbd
 #define READ_CD               0xbe
 #define SEND_DVD_STRUCTURE    0xbf
+#define PR_HELPER_CLEANUP     0xff /* vendor-specific QEMU command */
 
 /*
  * SERVICE ACTION IN subcodes
@@ -225,15 +226,18 @@
 #define TYPE_NO_LUN         0x7f
 
 /* Mode page codes for mode sense/set */
+#define MODE_PAGE_VENDOR_SPECIFIC             0x00
 #define MODE_PAGE_R_W_ERROR                   0x01
 #define MODE_PAGE_HD_GEOMETRY                 0x04
 #define MODE_PAGE_FLEXIBLE_DISK_GEOMETRY      0x05
 #define MODE_PAGE_CACHING                     0x08
 #define MODE_PAGE_AUDIO_CTL                   0x0e
+#define MODE_PAGE_CONTROL                     0x0a
 #define MODE_PAGE_POWER                       0x1a
 #define MODE_PAGE_FAULT_FAIL                  0x1c
 #define MODE_PAGE_TO_PROTECT                  0x1d
 #define MODE_PAGE_CAPABILITIES                0x2a
+#define MODE_PAGE_APPLE_VENDOR                0x30
 #define MODE_PAGE_ALLS                        0x3f
 /* Not in Mt. Fuji, but in ATAPI 2.6 -- deprecated now in favor
  * of MODE_PAGE_SENSE_POWER */
@@ -315,5 +319,36 @@
 #define XCOPY_DESC_OFFSET 16
 #define IDENT_DESCR_TGT_DESCR_SIZE 32
 #define XCOPY_BLK2BLK_SEG_DESC_SIZE 28
+
+/*
+ * PERSISTENT RESERVATION IN service action codes
+ */
+#define PRI_READ_KEYS           0x00
+#define PRI_READ_RESERVATION    0x01
+#define PRI_REPORT_CAPABILITIES 0x02
+#define PRI_READ_FULL_STATUS    0x03
+
+/*
+ * PERSISTENT RESERVATION OUT service action codes
+ */
+#define PRO_REGISTER                            0x00
+#define PRO_RESERVE                             0x01
+#define PRO_RELEASE                             0x02
+#define PRO_CLEAR                               0x03
+#define PRO_PREEMPT                             0x04
+#define PRO_PREEMPT_AND_ABORT                   0x05
+#define PRO_REGISTER_AND_IGNORE_EXISTING_KEY    0x06
+#define PRO_REGISTER_AND_MOVE                   0x07
+#define PRO_REPLACE_LOST_RESERVATION            0x08
+
+/*
+ * Persistent reservation types
+ */
+#define PR_TYPE_WRITE_EXCLUSIVE             0x1
+#define PR_TYPE_EXCLUSIVE_ACCESS            0x3
+#define PR_TYPE_WRITE_EXCLUSIVE_REG_ONLY    0x5
+#define PR_TYPE_EXCLUSIVE_ACCESS_REG_ONLY   0x6
+#define PR_TYPE_WRITE_EXCLUSIVE_ALL_REGS    0x7
+#define PR_TYPE_EXCLUSIVE_ACCESS_ALL_REGS   0x8
 
 #endif

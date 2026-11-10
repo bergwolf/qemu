@@ -27,7 +27,6 @@
 #include "qemu/error-report.h"
 #include "qemu/config-file.h"
 #include "monitor/monitor.h"
-#include "trace/trace-root.h"
 
 int trace_events_enabled_count;
 
@@ -37,9 +36,10 @@ typedef struct TraceEventGroup {
 
 static TraceEventGroup *event_groups;
 static size_t nevent_groups;
+#ifdef CONFIG_TRACE_SIMPLE
 static uint32_t next_id;
-static uint32_t next_vcpu_id;
 static bool init_trace_on_startup;
+#endif
 static char *trace_opts_file;
 
 QemuOptsList qemu_trace_opts = {
@@ -65,20 +65,12 @@ QemuOptsList qemu_trace_opts = {
 
 void trace_event_register_group(TraceEvent **events)
 {
+#ifdef CONFIG_TRACE_SIMPLE
     size_t i;
     for (i = 0; events[i] != NULL; i++) {
         events[i]->id = next_id++;
-        if (events[i]->vcpu_id == TRACE_VCPU_EVENT_NONE) {
-            continue;
-        }
-
-        if (likely(next_vcpu_id < CPU_TRACE_DSTATE_MAX_EVENTS)) {
-            events[i]->vcpu_id = next_vcpu_id++;
-        } else {
-            warn_report("too many vcpu trace events; dropping '%s'",
-                        events[i]->name);
-        }
     }
+#endif
     event_groups = g_renew(TraceEventGroup, event_groups, nevent_groups + 1);
     event_groups[nevent_groups].events = events;
     nevent_groups++;
@@ -161,7 +153,7 @@ void trace_list_events(FILE *f)
     fprintf(f, "This list of names of trace points may be incomplete "
                "when using the DTrace/SystemTap backends.\n"
                "Run 'qemu-trace-stap list %s' to print the full list.\n",
-            error_get_progname());
+            g_get_prgname());
 #endif
 }
 
@@ -175,15 +167,6 @@ static void do_trace_enable_events(const char *line_buf)
 
     trace_event_iter_init_pattern(&iter, line_ptr);
     while ((ev = trace_event_iter_next(&iter)) != NULL) {
-        if (!trace_event_get_state_static(ev)) {
-            if (!is_pattern) {
-                warn_report("trace event '%s' is not traceable",
-                            line_ptr);
-                return;
-            }
-            continue;
-        }
-
         /* start tracing */
         trace_event_set_state_dynamic(ev, enable);
         if (!is_pattern) {
@@ -272,24 +255,6 @@ void trace_init_file(void)
 #endif
 }
 
-void trace_fini_vcpu(CPUState *vcpu)
-{
-    TraceEventIter iter;
-    TraceEvent *ev;
-
-    trace_guest_cpu_exit(vcpu);
-
-    trace_event_iter_init_all(&iter);
-    while ((ev = trace_event_iter_next(&iter)) != NULL) {
-        if (trace_event_is_vcpu(ev) &&
-            trace_event_get_state_static(ev) &&
-            trace_event_get_vcpu_state_dynamic(vcpu, ev)) {
-            /* must disable to affect the global counter */
-            trace_event_set_vcpu_state_dynamic(vcpu, ev, false);
-        }
-    }
-}
-
 bool trace_init_backends(void)
 {
 #ifdef CONFIG_TRACE_SIMPLE
@@ -313,10 +278,10 @@ bool trace_init_backends(void)
     return true;
 }
 
-void trace_opt_parse(const char *optarg)
+void trace_opt_parse(const char *optstr)
 {
     QemuOpts *opts = qemu_opts_parse_noisily(qemu_find_opts("trace"),
-                                             optarg, true);
+                                             optstr, true);
     if (!opts) {
         exit(1);
     }
@@ -324,13 +289,10 @@ void trace_opt_parse(const char *optarg)
         trace_enable_events(qemu_opt_get(opts, "enable"));
     }
     trace_init_events(qemu_opt_get(opts, "events"));
+#ifdef CONFIG_TRACE_SIMPLE
     init_trace_on_startup = true;
+#endif
     g_free(trace_opts_file);
     trace_opts_file = g_strdup(qemu_opt_get(opts, "file"));
     qemu_opts_del(opts);
-}
-
-uint32_t trace_get_vcpu_event_count(void)
-{
-    return next_vcpu_id;
 }

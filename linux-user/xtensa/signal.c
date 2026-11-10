@@ -21,6 +21,7 @@
 #include "user-internals.h"
 #include "signal-common.h"
 #include "linux-user/trace.h"
+#include "target/xtensa/cpu.h"
 
 struct target_sigcontext {
     abi_ulong sc_pc;
@@ -43,10 +44,25 @@ struct target_ucontext {
     target_sigset_t tuc_sigmask;
 };
 
+struct target_xtensa_xtregs_fp {
+    uint32_t f[16];
+    uint32_t fcr;
+    uint32_t fsr;
+};
+
+struct target_xtensa_xtregs_dfp {
+    uint64_t f[16];
+    uint32_t fcr;
+    uint32_t fsr;
+};
+
 struct target_rt_sigframe {
     target_siginfo_t info;
     struct target_ucontext uc;
-    /* TODO: xtregs */
+    union {
+        struct target_xtensa_xtregs_fp fp;
+        struct target_xtensa_xtregs_dfp dfp;
+    } xtregs;
     uint8_t retcode[6];
     abi_ulong window[4];
 };
@@ -107,6 +123,7 @@ static int flush_window_regs(CPUXtensaState *env)
 }
 
 static int setup_sigcontext(struct target_rt_sigframe *frame,
+                            abi_ulong frame_addr,
                             CPUXtensaState *env)
 {
     struct target_sigcontext *sc = &frame->uc.tuc_mcontext;
@@ -123,14 +140,31 @@ static int setup_sigcontext(struct target_rt_sigframe *frame,
     for (i = 0; i < 16; ++i) {
         __put_user(env->regs[i], sc->sc_a + i);
     }
-    __put_user(0, &sc->sc_xtregs);
-    /* TODO: xtregs */
+    if (xtensa_option_enabled(env->config, XTENSA_OPTION_DFP_COPROCESSOR)) {
+        for (i = 0; i < 16; ++i) {
+            __put_user(env->fregs[i].f64, &frame->xtregs.dfp.f[i]);
+        }
+        __put_user(env->uregs[FCR], &frame->xtregs.dfp.fcr);
+        __put_user(cpu_get_fsr(env), &frame->xtregs.dfp.fsr);
+        __put_user(frame_addr + offsetof(struct target_rt_sigframe, xtregs),
+                   &sc->sc_xtregs);
+    } else if (xtensa_option_enabled(env->config, XTENSA_OPTION_FP_COPROCESSOR)) {
+        for (i = 0; i < 16; ++i) {
+            __put_user(env->fregs[i].f32[FP_F32_LOW], &frame->xtregs.fp.f[i]);
+        }
+        __put_user(env->uregs[FCR], &frame->xtregs.fp.fcr);
+        __put_user(cpu_get_fsr(env), &frame->xtregs.fp.fsr);
+        __put_user(frame_addr + offsetof(struct target_rt_sigframe, xtregs),
+                   &sc->sc_xtregs);
+    } else {
+        __put_user(0, &sc->sc_xtregs);
+    }
     return 1;
 }
 
 static void install_sigtramp(uint8_t *tramp)
 {
-#ifdef TARGET_WORDS_BIGENDIAN
+#if TARGET_BIG_ENDIAN
     /* Generate instruction:  MOVI a2, __NR_rt_sigreturn */
     __put_user(0x22, &tramp[0]);
     __put_user(0x0a, &tramp[1]);
@@ -157,6 +191,9 @@ void setup_rt_frame(int sig, struct target_sigaction *ka,
 {
     abi_ulong frame_addr;
     struct target_rt_sigframe *frame;
+    int is_fdpic = info_is_fdpic(get_task_state(thread_cpu)->info);
+    abi_ulong handler = 0;
+    abi_ulong handler_fdpic_GOT = 0;
     uint32_t ra;
     bool abi_call0;
     unsigned base;
@@ -165,18 +202,29 @@ void setup_rt_frame(int sig, struct target_sigaction *ka,
     frame_addr = get_sigframe(ka, env, sizeof(*frame));
     trace_user_setup_rt_frame(env, frame_addr);
 
+    if (is_fdpic) {
+        abi_ulong funcdesc_ptr = ka->_sa_handler;
+
+        if (get_user_ual(handler, funcdesc_ptr)
+            || get_user_ual(handler_fdpic_GOT, funcdesc_ptr + 4)) {
+            goto give_sigsegv;
+        }
+    } else {
+        handler = ka->_sa_handler;
+    }
+
     if (!lock_user_struct(VERIFY_WRITE, frame, frame_addr, 0)) {
         goto give_sigsegv;
     }
 
     if (ka->sa_flags & SA_SIGINFO) {
-        tswap_siginfo(&frame->info, info);
+        frame->info = *info;
     }
 
     __put_user(0, &frame->uc.tuc_flags);
     __put_user(0, &frame->uc.tuc_link);
     target_save_altstack(&frame->uc.tuc_stack, env);
-    if (!setup_sigcontext(frame, env)) {
+    if (!setup_sigcontext(frame, frame_addr, env)) {
         unlock_user_struct(frame, frame_addr, 0);
         goto give_sigsegv;
     }
@@ -185,14 +233,21 @@ void setup_rt_frame(int sig, struct target_sigaction *ka,
     }
 
     if (ka->sa_flags & TARGET_SA_RESTORER) {
-        ra = ka->sa_restorer;
+        if (is_fdpic) {
+            if (get_user_ual(ra, ka->sa_restorer)) {
+                unlock_user_struct(frame, frame_addr, 0);
+                goto give_sigsegv;
+            }
+        } else {
+            ra = ka->sa_restorer;
+        }
     } else {
         /* Not used, but retain for ABI compatibility. */
         install_sigtramp(frame->retcode);
         ra = default_rt_sigreturn;
     }
     memset(env->regs, 0, sizeof(env->regs));
-    env->pc = ka->_sa_handler;
+    env->pc = handler;
     env->regs[1] = frame_addr;
     env->sregs[WINDOW_BASE] = 0;
     env->sregs[WINDOW_START] = 1;
@@ -212,16 +267,18 @@ void setup_rt_frame(int sig, struct target_sigaction *ka,
     env->regs[base + 3] = frame_addr + offsetof(struct target_rt_sigframe,
                                                 info);
     env->regs[base + 4] = frame_addr + offsetof(struct target_rt_sigframe, uc);
+    if (is_fdpic) {
+        env->regs[base + 11] = handler_fdpic_GOT;
+    }
     unlock_user_struct(frame, frame_addr, 1);
     return;
 
 give_sigsegv:
     force_sigsegv(sig);
-    return;
 }
 
-static void restore_sigcontext(CPUXtensaState *env,
-                               struct target_rt_sigframe *frame)
+static int restore_sigcontext(CPUXtensaState *env,
+                              struct target_rt_sigframe *frame)
 {
     struct target_sigcontext *sc = &frame->uc.tuc_mcontext;
     uint32_t ps;
@@ -243,7 +300,51 @@ static void restore_sigcontext(CPUXtensaState *env,
     for (i = 0; i < 16; ++i) {
         __get_user(env->regs[i], sc->sc_a + i);
     }
-    /* TODO: xtregs */
+    {
+        abi_ulong xtregs_addr;
+
+        __get_user(xtregs_addr, &sc->sc_xtregs);
+        if (xtregs_addr) {
+            if (xtensa_option_enabled(env->config,
+                                      XTENSA_OPTION_DFP_COPROCESSOR)) {
+                struct target_xtensa_xtregs_dfp *xtregs;
+                uint32_t fcr, fsr;
+
+                xtregs = lock_user(VERIFY_READ, xtregs_addr,
+                                   sizeof(*xtregs), 1);
+                if (!xtregs) {
+                    return 0;
+                }
+                for (i = 0; i < 16; ++i) {
+                    __get_user(env->fregs[i].f64, &xtregs->f[i]);
+                }
+                __get_user(fcr, &xtregs->fcr);
+                __get_user(fsr, &xtregs->fsr);
+                unlock_user(xtregs, xtregs_addr, 0);
+                cpu_set_fcr(env, fcr);
+                cpu_set_fsr(env, fsr);
+            } else if (xtensa_option_enabled(env->config,
+                                             XTENSA_OPTION_FP_COPROCESSOR)) {
+                struct target_xtensa_xtregs_fp *xtregs;
+                uint32_t fcr, fsr;
+
+                xtregs = lock_user(VERIFY_READ, xtregs_addr,
+                                   sizeof(*xtregs), 1);
+                if (!xtregs) {
+                    return 0;
+                }
+                for (i = 0; i < 16; ++i) {
+                    __get_user(env->fregs[i].f32[FP_F32_LOW], &xtregs->f[i]);
+                }
+                __get_user(fcr, &xtregs->fcr);
+                __get_user(fsr, &xtregs->fsr);
+                unlock_user(xtregs, xtregs_addr, 0);
+                cpu_set_fcr(env, fcr);
+                cpu_set_fsr(env, fsr);
+            }
+        }
+    }
+    return 1;
 }
 
 long do_rt_sigreturn(CPUXtensaState *env)
@@ -254,12 +355,15 @@ long do_rt_sigreturn(CPUXtensaState *env)
 
     trace_user_do_rt_sigreturn(env, frame_addr);
     if (!lock_user_struct(VERIFY_READ, frame, frame_addr, 1)) {
-        goto badframe;
+        force_sig(TARGET_SIGSEGV);
+        return -QEMU_ESIGRETURN;
     }
     target_to_host_sigset(&set, &frame->uc.tuc_sigmask);
     set_sigmask(&set);
 
-    restore_sigcontext(env, frame);
+    if (!restore_sigcontext(env, frame)) {
+        goto badframe;
+    }
     target_restore_altstack(&frame->uc.tuc_stack, env);
 
     unlock_user_struct(frame, frame_addr, 0);

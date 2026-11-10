@@ -146,21 +146,17 @@ static void wctablet_queue_event(TabletChardev *tablet)
 }
 
 static void wctablet_input_event(DeviceState *dev, QemuConsole *src,
-                                InputEvent *evt)
+                                 QemuInputEvent *evt)
 {
     TabletChardev *tablet = (TabletChardev *)dev;
-    InputMoveEvent *move;
-    InputBtnEvent *btn;
 
     switch (evt->type) {
     case INPUT_EVENT_KIND_ABS:
-        move = evt->u.abs.data;
-        tablet->axis[move->axis] = move->value;
+        tablet->axis[evt->abs.axis] = evt->abs.value;
         break;
 
     case INPUT_EVENT_KIND_BTN:
-        btn = evt->u.btn.data;
-        tablet->btns[btn->button] = btn->down;
+        tablet->btns[evt->btn.button] = evt->btn.down;
         break;
 
     default:
@@ -178,7 +174,7 @@ static void wctablet_input_sync(DeviceState *dev)
     }
 }
 
-static QemuInputHandler wctablet_handler = {
+static const QemuInputHandler wctablet_handler = {
     .name  = "QEMU Wacom Pen Tablet",
     .mask  = INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_ABS,
     .event = wctablet_input_event,
@@ -319,17 +315,16 @@ static void wctablet_chr_finalize(Object *obj)
 {
     TabletChardev *tablet = WCTABLET_CHARDEV(obj);
 
-    qemu_input_handler_unregister(tablet->hs);
+    if (tablet->hs) {
+        qemu_input_handler_unregister(tablet->hs);
+    }
 }
 
-static void wctablet_chr_open(Chardev *chr,
+static bool wctablet_chr_open(Chardev *chr,
                               ChardevBackend *backend,
-                              bool *be_opened,
                               Error **errp)
 {
     TabletChardev *tablet = WCTABLET_CHARDEV(chr);
-
-    *be_opened = true;
 
     /* init state machine */
     memcpy(tablet->outbuf, WC_FULL_CONFIG_STRING, WC_FULL_CONFIG_STRING_LENGTH);
@@ -338,13 +333,16 @@ static void wctablet_chr_open(Chardev *chr,
 
     tablet->hs = qemu_input_handler_register((DeviceState *)tablet,
                                              &wctablet_handler);
+
+    qemu_chr_be_event(chr, CHR_EVENT_OPENED);
+    return true;
 }
 
-static void wctablet_chr_class_init(ObjectClass *oc, void *data)
+static void wctablet_chr_class_init(ObjectClass *oc, const void *data)
 {
     ChardevClass *cc = CHARDEV_CLASS(oc);
 
-    cc->open = wctablet_chr_open;
+    cc->chr_open = wctablet_chr_open;
     cc->chr_write = wctablet_chr_write;
     cc->chr_ioctl = wctablet_chr_ioctl;
     cc->chr_accept_input = wctablet_chr_accept_input;

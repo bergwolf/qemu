@@ -19,32 +19,22 @@
 #define HW_USB_HCD_EHCI_H
 
 #include "qemu/timer.h"
-#include "hw/usb.h"
-#include "sysemu/dma.h"
-#include "hw/pci/pci.h"
-#include "hw/sysbus.h"
-#include "qom/object.h"
-
-#ifndef EHCI_DEBUG
-#define EHCI_DEBUG   0
-#endif
-
-#if EHCI_DEBUG
-#define DPRINTF printf
-#else
-#define DPRINTF(...)
-#endif
+#include "hw/usb/usb.h"
+#include "system/dma.h"
+#include "hw/pci/pci_device.h"
+#include "hw/core/sysbus.h"
 
 #define MMIO_SIZE        0x1000
 #define CAPA_SIZE        0x10
 
-#define NB_PORTS         6        /* Max. Number of downstream ports */
+#define EHCI_PORTS       6        /* Max. Number of downstream ports */
 
 typedef struct EHCIPacket EHCIPacket;
 typedef struct EHCIQueue EHCIQueue;
 typedef struct EHCIState EHCIState;
 
-/*  EHCI spec version 1.0 Section 3.3
+/*
+ * EHCI spec version 1.0 Section 3.3
  */
 typedef struct EHCIitd {
     uint32_t next;
@@ -73,9 +63,11 @@ typedef struct EHCIitd {
 #define ITD_BUFPTR_MAXPKT_SH     0
 #define ITD_BUFPTR_MULT_MASK     0x00000003
 #define ITD_BUFPTR_MULT_SH       0
+    uint32_t bufptr_hi[7];
 } EHCIitd;
 
-/*  EHCI spec version 1.0 Section 3.4
+/*
+ * EHCI spec version 1.0 Section 3.4
  */
 typedef struct EHCIsitd {
     uint32_t next;                  /* Standard next link pointer */
@@ -119,7 +111,8 @@ typedef struct EHCIsitd {
     uint32_t backptr;                 /* Standard next link pointer */
 } EHCIsitd;
 
-/*  EHCI spec version 1.0 Section 3.5
+/*
+ * EHCI spec version 1.0 Section 3.5
  */
 typedef struct EHCIqtd {
     uint32_t next;                    /* Standard next link pointer */
@@ -147,9 +140,14 @@ typedef struct EHCIqtd {
     uint32_t bufptr[5];               /* Standard buffer pointer */
 #define QTD_BUFPTR_MASK               0xfffff000
 #define QTD_BUFPTR_SH                 12
+    uint32_t bufptr_hi[5];
 } EHCIqtd;
 
-/*  EHCI spec version 1.0 Section 3.6
+/* QH overlay: altnext_qtd, token, bufptr[5], bufptr_hi[5] */
+#define EHCI_QH_OVERLAY_COUNT 12
+
+/*
+ * EHCI spec version 1.0 Section 3.6
  */
 typedef struct EHCIqh {
     uint32_t next;                    /* Standard next link pointer */
@@ -201,14 +199,8 @@ typedef struct EHCIqh {
 #define BUFPTR_FRAMETAG_MASK          0x0000001f
 #define BUFPTR_SBYTES_MASK            0x00000fe0
 #define BUFPTR_SBYTES_SH              5
+    uint32_t bufptr_hi[5];
 } EHCIqh;
-
-/*  EHCI spec version 1.0 Section 3.7
- */
-typedef struct EHCIfstn {
-    uint32_t next;                    /* Standard next link pointer */
-    uint32_t backptr;                 /* Standard next link pointer */
-} EHCIfstn;
 
 enum async_state {
     EHCI_ASYNC_NONE = 0,
@@ -222,7 +214,7 @@ struct EHCIPacket {
     QTAILQ_ENTRY(EHCIPacket) next;
 
     EHCIqtd qtd;           /* copy of current QTD (being worked on) */
-    uint32_t qtdaddr;      /* address QTD read from                 */
+    uint64_t qtdaddr;      /* address QTD read from                 */
 
     USBPacket packet;
     QEMUSGList sgl;
@@ -238,12 +230,13 @@ struct EHCIQueue {
     int async;
     int transact_ctr;
 
-    /* cached data from guest - needs to be flushed
+    /*
+     * cached data from guest - needs to be flushed
      * when guest removes an entry (doorbell, handshake sequence)
      */
     EHCIqh qh;             /* copy of current QH (being worked on) */
-    uint32_t qhaddr;       /* address QH read from                 */
-    uint32_t qtdaddr;      /* address QTD read from                */
+    uint64_t qhaddr;       /* address QH read from                 */
+    uint64_t qtdaddr;      /* address QTD read from                */
     int last_pid;          /* pid of last packet executed          */
     USBDevice *dev;
     QTAILQ_HEAD(, EHCIPacket) packets;
@@ -269,6 +262,13 @@ struct EHCIState {
 
     /* properties */
     uint32_t maxframes;
+    /*
+     * Controls migration stream compatibility for old machine types.
+     * Old machine types only transfer 32-bit fetch addresses.
+     */
+    bool migrate_fetch_addr_64bit;
+    bool caps_64bit_addr;
+    uint32_t ctrldssegment_default;
 
     /*
      *  EHCI spec version 1.0 Section 2.3
@@ -276,7 +276,7 @@ struct EHCIState {
      */
     uint8_t caps[CAPA_SIZE];
     union {
-        uint32_t opreg[0x44/sizeof(uint32_t)];
+        uint32_t opreg[0x44 / sizeof(uint32_t)];
         struct {
             uint32_t usbcmd;
             uint32_t usbsts;
@@ -289,7 +289,7 @@ struct EHCIState {
             uint32_t configflag;
         };
     };
-    uint32_t portsc[NB_PORTS];
+    uint32_t portsc[EHCI_PORTS];
 
     /*
      *  Internal states, shadow registers, etc
@@ -299,16 +299,25 @@ struct EHCIState {
     bool working;
     uint32_t astate;         /* Current state in asynchronous schedule */
     uint32_t pstate;         /* Current state in periodic schedule     */
-    USBPort ports[NB_PORTS];
-    USBPort *companion_ports[NB_PORTS];
+    USBPort ports[EHCI_PORTS];
+    USBPort *companion_ports[EHCI_PORTS];
     uint32_t usbsts_pending;
     uint32_t usbsts_frindex;
     EHCIQueueHead aqueues;
     EHCIQueueHead pqueues;
 
-    /* which address to look at next */
-    uint32_t a_fetch_addr;
-    uint32_t p_fetch_addr;
+    /*
+     * which address to look at next
+     *
+     * Migration compatibility fields for old machine types that only
+     * support 32-bit fetch addresses in the migration stream.
+     *
+     * New machine types migrate the full 64-bit runtime fetch address.
+     */
+    uint32_t migrate_a_fetch_addr;
+    uint32_t migrate_p_fetch_addr;
+    uint64_t a_fetch_addr;
+    uint64_t p_fetch_addr;
 
     USBPacket ipacket;
     QEMUSGList isgl;
@@ -319,6 +328,15 @@ struct EHCIState {
     bool int_req_by_async;
     VMChangeStateEntry *vmstate;
 };
+
+#define DEFINE_EHCI_COMMON_PROPERTIES(_state) \
+    DEFINE_PROP_UINT32("maxframes", _state, ehci.maxframes, 128), \
+    DEFINE_PROP_BOOL("x-migrate-fetch-addr-64bit", _state, \
+                     ehci.migrate_fetch_addr_64bit, true), \
+    DEFINE_PROP_BOOL("caps-64bit-addr", _state, \
+                     ehci.caps_64bit_addr, false), \
+    DEFINE_PROP_UINT32("ctrldssegment-default", _state, \
+                       ehci.ctrldssegment_default, 0)
 
 extern const VMStateDescription vmstate_ehci;
 

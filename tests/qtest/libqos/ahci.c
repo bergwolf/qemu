@@ -24,12 +24,11 @@
 
 #include "qemu/osdep.h"
 
-#include "libqtest.h"
+#include "../libqtest.h"
 #include "ahci.h"
 #include "pci-pc.h"
 
-#include "qemu-common.h"
-#include "qemu/host-utils.h"
+#include "qemu/bswap.h"
 
 #include "hw/pci/pci_ids.h"
 #include "hw/pci/pci_regs.h"
@@ -75,6 +74,7 @@ AHCICommandProp ahci_command_properties[] = {
     { .cmd = CMD_READ_MAX,       .lba28 = true },
     { .cmd = CMD_READ_MAX_EXT,   .lba48 = true },
     { .cmd = CMD_FLUSH_CACHE,    .data = false },
+    { .cmd = CMD_INIT_DP,        .data = false },
     { .cmd = CMD_PACKET,         .data = true,  .size = 16,
                                  .atapi = true, .pio = true },
     { .cmd = CMD_PACKET_ID,      .data = true,  .pio = true,
@@ -206,6 +206,11 @@ void ahci_pci_enable(AHCIQState *ahci)
 
 }
 
+void ahci_pci_disable(AHCIQState *ahci)
+{
+    stop_ahci_device(ahci);
+}
+
 /**
  * Map BAR5/ABAR, and engage the PCI device.
  */
@@ -216,6 +221,12 @@ void start_ahci_device(AHCIQState *ahci)
 
     /* turns on pci.cmd.iose, pci.cmd.mse and pci.cmd.bme */
     qpci_device_enable(ahci->dev);
+}
+
+void stop_ahci_device(AHCIQState *ahci)
+{
+    /* Unmap AHCI's ABAR (no-op if not mapped) */
+    qpci_iounmap(ahci->dev, ahci->hba_bar);
 }
 
 /**
@@ -239,6 +250,7 @@ void ahci_hba_enable(AHCIQState *ahci)
     uint8_t num_cmd_slots;
 
     g_assert(ahci != NULL);
+    g_assert(ahci->hba_bar.mapped);
 
     /* Set GHC.AE to 1 */
     ahci_set(ahci, AHCI_GHC, AHCI_GHC_AE);
@@ -405,57 +417,110 @@ void ahci_port_clear(AHCIQState *ahci, uint8_t port)
 /**
  * Check a port for errors.
  */
-void ahci_port_check_error(AHCIQState *ahci, uint8_t port,
-                           uint32_t imask, uint8_t emask)
+void ahci_port_check_error(AHCIQState *ahci, AHCICommand *cmd)
 {
+    uint8_t port = cmd->port;
     uint32_t reg;
 
-    /* The upper 9 bits of the IS register all indicate errors. */
-    reg = ahci_px_rreg(ahci, port, AHCI_PX_IS);
-    reg &= ~imask;
-    reg >>= 23;
-    g_assert_cmphex(reg, ==, 0);
+    /* If expecting TF error, ensure that TFES is set. */
+    if (cmd->errors) {
+        reg = ahci_px_rreg(ahci, port, AHCI_PX_IS);
+        ASSERT_BIT_SET(reg, AHCI_PX_IS_TFES);
+    } else {
+        /* The upper 9 bits of the IS register all indicate errors. */
+        reg = ahci_px_rreg(ahci, port, AHCI_PX_IS);
+        reg &= ~cmd->interrupts;
+        reg >>= 23;
+        g_assert_cmphex(reg, ==, 0);
+    }
 
-    /* The Sata Error Register should be empty. */
+    /* The Sata Error Register should be empty, even when expecting TF error. */
     reg = ahci_px_rreg(ahci, port, AHCI_PX_SERR);
     g_assert_cmphex(reg, ==, 0);
 
+    /* If expecting TF error, and TFES was set, perform error recovery
+     * (see AHCI 1.3 section 6.2.2.1) such that we can send new commands. */
+    if (cmd->errors) {
+        /* This will clear PxCI. */
+        ahci_px_clr(ahci, port, AHCI_PX_CMD, AHCI_PX_CMD_ST);
+
+        /* The port has 500ms to disengage. */
+        usleep(500000);
+        reg = ahci_px_rreg(ahci, port, AHCI_PX_CMD);
+        ASSERT_BIT_CLEAR(reg, AHCI_PX_CMD_CR);
+
+        /* Clear PxIS. */
+        reg = ahci_px_rreg(ahci, port, AHCI_PX_IS);
+        ahci_px_wreg(ahci, port, AHCI_PX_IS, reg);
+
+        /* Check if we need to perform a COMRESET.
+         * Not implemented right now, as there is no reason why our QEMU model
+         * should need a COMRESET when expecting TF error. */
+        reg = ahci_px_rreg(ahci, port, AHCI_PX_TFD);
+        ASSERT_BIT_CLEAR(reg, AHCI_PX_TFD_STS_BSY | AHCI_PX_TFD_STS_DRQ);
+
+        /* Enable issuing new commands. */
+        ahci_px_set(ahci, port, AHCI_PX_CMD, AHCI_PX_CMD_ST);
+    }
+
     /* The TFD also has two error sections. */
     reg = ahci_px_rreg(ahci, port, AHCI_PX_TFD);
-    if (!emask) {
+    if (!cmd->errors) {
         ASSERT_BIT_CLEAR(reg, AHCI_PX_TFD_STS_ERR);
     } else {
         ASSERT_BIT_SET(reg, AHCI_PX_TFD_STS_ERR);
     }
-    ASSERT_BIT_CLEAR(reg, AHCI_PX_TFD_ERR & (~emask << 8));
-    ASSERT_BIT_SET(reg, AHCI_PX_TFD_ERR & (emask << 8));
+    ASSERT_BIT_CLEAR(reg, AHCI_PX_TFD_ERR & (~cmd->errors << 8));
+    ASSERT_BIT_SET(reg, AHCI_PX_TFD_ERR & (cmd->errors << 8));
 }
 
-void ahci_port_check_interrupts(AHCIQState *ahci, uint8_t port,
-                                uint32_t intr_mask)
+void ahci_port_check_interrupts(AHCIQState *ahci, AHCICommand *cmd)
 {
+    uint8_t port = cmd->port;
     uint32_t reg;
+
+    /* If we expect errors, error handling in ahci_port_check_error() will
+     * already have cleared PxIS, so in that case this function cannot verify
+     * and clear expected interrupts. */
+    if (cmd->errors) {
+        return;
+    }
 
     /* Check for expected interrupts */
     reg = ahci_px_rreg(ahci, port, AHCI_PX_IS);
-    ASSERT_BIT_SET(reg, intr_mask);
+    ASSERT_BIT_SET(reg, cmd->interrupts);
 
     /* Clear expected interrupts and assert all interrupts now cleared. */
-    ahci_px_wreg(ahci, port, AHCI_PX_IS, intr_mask);
+    ahci_px_wreg(ahci, port, AHCI_PX_IS, cmd->interrupts);
     g_assert_cmphex(ahci_px_rreg(ahci, port, AHCI_PX_IS), ==, 0);
 }
 
-void ahci_port_check_nonbusy(AHCIQState *ahci, uint8_t port, uint8_t slot)
+void ahci_port_check_nonbusy(AHCIQState *ahci, AHCICommand *cmd)
 {
+    uint8_t slot = cmd->slot;
+    uint8_t port = cmd->port;
     uint32_t reg;
 
-    /* Assert that the command slot is no longer busy (NCQ) */
+    /* For NCQ command with error PxSACT bit should still be set.
+     * For NCQ command without error, PxSACT bit should be cleared.
+     * For non-NCQ command, PxSACT bit should always be cleared. */
     reg = ahci_px_rreg(ahci, port, AHCI_PX_SACT);
-    ASSERT_BIT_CLEAR(reg, (1 << slot));
+    if (cmd->props->ncq && cmd->errors) {
+        ASSERT_BIT_SET(reg, (1 << slot));
+    } else {
+        ASSERT_BIT_CLEAR(reg, (1 << slot));
+    }
 
-    /* Non-NCQ */
+    /* For non-NCQ command with error, PxCI bit should still be set.
+     * For non-NCQ command without error, PxCI bit should be cleared.
+     * For NCQ command without error, PxCI bit should be cleared.
+     * For NCQ command with error, PxCI bit may or may not be cleared. */
     reg = ahci_px_rreg(ahci, port, AHCI_PX_CI);
-    ASSERT_BIT_CLEAR(reg, (1 << slot));
+    if (!cmd->props->ncq && cmd->errors) {
+        ASSERT_BIT_SET(reg, (1 << slot));
+    } else if (!cmd->errors) {
+        ASSERT_BIT_CLEAR(reg, (1 << slot));
+    }
 
     /* And assert that we are generally not busy. */
     reg = ahci_px_rreg(ahci, port, AHCI_PX_TFD);
@@ -610,7 +675,7 @@ unsigned ahci_pick_cmd(AHCIQState *ahci, uint8_t port)
     g_assert_not_reached();
 }
 
-inline unsigned size_to_prdtl(unsigned bytes, unsigned bytes_per_prd)
+static unsigned size_to_prdtl(unsigned bytes, unsigned bytes_per_prd)
 {
     /* Each PRD can describe up to 4MiB */
     g_assert_cmphex(bytes_per_prd, <=, 4096 * 1024);
@@ -655,6 +720,11 @@ void ahci_exec(AHCIQState *ahci, uint8_t port,
     if (opts->atapi) {
         uint16_t bcl = opts->set_bcl ? opts->bcl : ATAPI_SECTOR_SIZE;
         cmd = ahci_atapi_command_create(op, bcl, opts->atapi_dma);
+        if (opts->atapi_raw) {
+            /* request full 2352-byte raw sectors; sector_size must match */
+            cmd->atapi_cmd[9] = 0xf8;
+            cmd->sector_size = ATAPI_RAW_SECTOR_SIZE;
+        }
     } else {
         cmd = ahci_command_create(op);
     }
@@ -994,7 +1064,7 @@ static void ahci_atapi_command_set_offset(AHCICommand *cmd, uint64_t lba)
     case CMD_ATAPI_REQUEST_SENSE:
     case CMD_ATAPI_TEST_UNIT_READY:
     case CMD_ATAPI_START_STOP_UNIT:
-        g_assert_cmpuint(lba, ==, 0x00);
+        g_assert_cmphex(lba, ==, 0x00);
         break;
     default:
         /* SCSI doesn't have uniform packet formats,
@@ -1057,7 +1127,7 @@ static void ahci_atapi_set_size(AHCICommand *cmd, uint64_t xbytes)
         break;
     case CMD_ATAPI_READ_CD:
         /* 24bit BE store */
-        g_assert_cmpuint(nsectors, <, 1ULL << 24);
+        g_assert_cmphex(nsectors, <, 1ULL << 24);
         tmp = nsectors;
         cbd[6] = (tmp & 0xFF0000) >> 16;
         cbd[7] = (tmp & 0xFF00) >> 8;
@@ -1121,6 +1191,19 @@ void ahci_command_set_size(AHCICommand *cmd, uint64_t xbytes)
 void ahci_command_set_prd_size(AHCICommand *cmd, unsigned prd_size)
 {
     ahci_command_set_sizes(cmd, cmd->xbytes, prd_size);
+}
+
+/* For a no-data command, whose count carries an argument of its own */
+void ahci_command_set_count(AHCICommand *cmd, uint16_t count)
+{
+    g_assert(!cmd->props->data);
+    cmd->fis.count = count;
+}
+
+void ahci_command_expect_error(AHCICommand *cmd, uint8_t err)
+{
+    cmd->interrupts |= AHCI_PX_IS_TFES;
+    cmd->errors |= err;
 }
 
 void ahci_command_adjust(AHCICommand *cmd, uint64_t offset, uint64_t buffer,
@@ -1208,9 +1291,10 @@ void ahci_command_wait(AHCIQState *ahci, AHCICommand *cmd)
 
 #define RSET(REG, MASK) (BITSET(ahci_px_rreg(ahci, cmd->port, (REG)), (MASK)))
 
-    while (RSET(AHCI_PX_TFD, AHCI_PX_TFD_STS_BSY) ||
-           RSET(AHCI_PX_CI, 1 << cmd->slot) ||
-           (cmd->props->ncq && RSET(AHCI_PX_SACT, 1 << cmd->slot))) {
+    while (!RSET(AHCI_PX_TFD, AHCI_PX_TFD_STS_ERR) &&
+           (RSET(AHCI_PX_TFD, AHCI_PX_TFD_STS_BSY) ||
+            RSET(AHCI_PX_CI, 1 << cmd->slot) ||
+            (cmd->props->ncq && RSET(AHCI_PX_SACT, 1 << cmd->slot)))) {
         usleep(50);
     }
 
@@ -1227,9 +1311,9 @@ void ahci_command_verify(AHCIQState *ahci, AHCICommand *cmd)
     uint8_t slot = cmd->slot;
     uint8_t port = cmd->port;
 
-    ahci_port_check_error(ahci, port, cmd->interrupts, cmd->errors);
-    ahci_port_check_interrupts(ahci, port, cmd->interrupts);
-    ahci_port_check_nonbusy(ahci, port, slot);
+    ahci_port_check_nonbusy(ahci, cmd);
+    ahci_port_check_error(ahci, cmd);
+    ahci_port_check_interrupts(ahci, cmd);
     ahci_port_check_cmd_sanity(ahci, cmd);
     if (cmd->interrupts & AHCI_PX_IS_DHRS) {
         ahci_port_check_d2h_sanity(ahci, port, slot);

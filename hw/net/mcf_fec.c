@@ -8,16 +8,17 @@
 
 #include "qemu/osdep.h"
 #include "qemu/log.h"
-#include "hw/irq.h"
+#include "system/physmem.h"
+#include "hw/core/irq.h"
 #include "net/net.h"
 #include "qemu/module.h"
 #include "hw/m68k/mcf.h"
 #include "hw/m68k/mcf_fec.h"
 #include "hw/net/mii.h"
-#include "hw/qdev-properties.h"
-#include "hw/sysbus.h"
-/* For crc32 */
-#include <zlib.h>
+#include "hw/core/qdev-properties.h"
+#include "hw/core/sysbus.h"
+#include "exec/cpu-common.h"
+#include <zlib.h> /* for crc32 */
 
 //#define DEBUG_FEC 1
 
@@ -175,7 +176,7 @@ typedef struct {
 
 static void mcf_fec_read_bd(mcf_fec_bd *bd, uint32_t addr)
 {
-    cpu_physical_memory_read(addr, bd, sizeof(*bd));
+    physical_memory_read(addr, bd, sizeof(*bd));
     be16_to_cpus(&bd->flags);
     be16_to_cpus(&bd->length);
     be32_to_cpus(&bd->data);
@@ -187,7 +188,7 @@ static void mcf_fec_write_bd(mcf_fec_bd *bd, uint32_t addr)
     tmp.flags = cpu_to_be16(bd->flags);
     tmp.length = cpu_to_be16(bd->length);
     tmp.data = cpu_to_be32(bd->data);
-    cpu_physical_memory_write(addr, &tmp, sizeof(tmp));
+    physical_memory_write(addr, &tmp, sizeof(tmp));
 }
 
 static void mcf_fec_update(mcf_fec_state *s)
@@ -260,7 +261,7 @@ static void mcf_fec_do_tx(mcf_fec_state *s)
             len = FEC_MAX_FRAME_SIZE - frame_size;
             s->eir |= FEC_INT_BABT;
         }
-        cpu_physical_memory_read(bd.data, ptr, len);
+        physical_memory_read(bd.data, ptr, len);
         ptr += len;
         frame_size += len;
         if (bd.flags & FEC_BD_L) {
@@ -313,10 +314,10 @@ static void mcf_fec_reset(DeviceState *dev)
     s->rfsr = 0x500;
 }
 
-#define MMFR_WRITE_OP	(1 << 28)
-#define MMFR_READ_OP	(2 << 28)
-#define MMFR_PHYADDR(v)	(((v) >> 23) & 0x1f)
-#define MMFR_REGNUM(v)	(((v) >> 18) & 0x1f)
+#define MMFR_WRITE_OP   (1 << 28)
+#define MMFR_READ_OP    (2 << 28)
+#define MMFR_PHYADDR(v) (((v) >> 23) & 0x1f)
+#define MMFR_REGNUM(v)  (((v) >> 18) & 0x1f)
 
 static uint64_t mcf_fec_read_mdio(mcf_fec_state *s)
 {
@@ -571,7 +572,7 @@ static ssize_t mcf_fec_receive(NetClientState *nc, const uint8_t *buf, size_t si
     size += 4;
     crc = cpu_to_be32(crc32(~0, buf, size));
     crc_ptr = (uint8_t *)&crc;
-    /* Huge frames are truncted.  */
+    /* Huge frames are truncated.  */
     if (size > FEC_MAX_FRAME_SIZE) {
         size = FEC_MAX_FRAME_SIZE;
         flags |= FEC_BD_TR | FEC_BD_LG;
@@ -596,10 +597,10 @@ static ssize_t mcf_fec_receive(NetClientState *nc, const uint8_t *buf, size_t si
         if (size < 4)
             buf_len += size - 4;
         buf_addr = bd.data;
-        cpu_physical_memory_write(buf_addr, buf, buf_len);
+        physical_memory_write(buf_addr, buf, buf_len);
         buf += buf_len;
         if (size < 4) {
-            cpu_physical_memory_write(buf_addr + buf_len, crc_ptr, 4 - size);
+            physical_memory_write(buf_addr + buf_len, crc_ptr, 4 - size);
             crc_ptr += 4 - size;
         }
         bd.flags &= ~FEC_BD_E;
@@ -643,7 +644,8 @@ static void mcf_fec_realize(DeviceState *dev, Error **errp)
     mcf_fec_state *s = MCF_FEC_NET(dev);
 
     s->nic = qemu_new_nic(&net_mcf_fec_info, &s->conf,
-                          object_get_typename(OBJECT(dev)), dev->id, s);
+                          object_get_typename(OBJECT(dev)), dev->id,
+                          &dev->mem_reentrancy_guard, s);
     qemu_format_nic_info_str(qemu_get_queue(s->nic), s->conf.macaddr.a);
 }
 
@@ -660,19 +662,18 @@ static void mcf_fec_instance_init(Object *obj)
     }
 }
 
-static Property mcf_fec_properties[] = {
+static const Property mcf_fec_properties[] = {
     DEFINE_NIC_PROPERTIES(mcf_fec_state, conf),
-    DEFINE_PROP_END_OF_LIST(),
 };
 
-static void mcf_fec_class_init(ObjectClass *oc, void *data)
+static void mcf_fec_class_init(ObjectClass *oc, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(oc);
 
     set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
     dc->realize = mcf_fec_realize;
     dc->desc = "MCF Fast Ethernet Controller network device";
-    dc->reset = mcf_fec_reset;
+    device_class_set_legacy_reset(dc, mcf_fec_reset);
     device_class_set_props(dc, mcf_fec_properties);
 }
 

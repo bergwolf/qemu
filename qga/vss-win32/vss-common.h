@@ -30,21 +30,6 @@
 #define __RPC__out_ecount_part(x, y)
 #endif
 #define _declspec(x)
-#undef uuid
-#define uuid(x)
-
-/* Undef some duplicated error codes redefined in vss.h */
-#undef VSS_E_BAD_STATE
-#undef VSS_E_PROVIDER_NOT_REGISTERED
-#undef VSS_E_PROVIDER_VETO
-#undef VSS_E_OBJECT_NOT_FOUND
-#undef VSS_E_VOLUME_NOT_SUPPORTED
-#undef VSS_E_VOLUME_NOT_SUPPORTED_BY_PROVIDER
-#undef VSS_E_OBJECT_ALREADY_EXISTS
-#undef VSS_E_UNEXPECTED_PROVIDER_ERROR
-#undef VSS_E_INVALID_XML_DOCUMENT
-#undef VSS_E_MAXIMUM_NUMBER_OF_VOLUMES_REACHED
-#undef VSS_E_MAXIMUM_NUMBER_OF_SNAPSHOTS_REACHED
 
 #include <vss.h>
 #include "vss-handles.h"
@@ -64,12 +49,13 @@ const CLSID CLSID_QGAVSSProvider = { 0x6e6a3492, 0x8d4d, 0x440c,
 const TCHAR g_szClsid[] = TEXT("{6E6A3492-8D4D-440C-9619-5E5D0CC31CA8}");
 const TCHAR g_szProgid[] = TEXT("QGAVSSProvider");
 
+#ifdef HAVE_VSS_SDK
 /* Enums undefined in VSS SDK 7.2 but defined in newer Windows SDK */
 enum __VSS_VOLUME_SNAPSHOT_ATTRIBUTES {
     VSS_VOLSNAP_ATTR_NO_AUTORECOVERY       = 0x00000002,
     VSS_VOLSNAP_ATTR_TXF_RECOVERY          = 0x02000000
 };
-
+#endif
 
 /* COM pointer utility; call ->Release() when it goes out of scope */
 template <class T>

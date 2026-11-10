@@ -12,7 +12,7 @@
 #ifndef TPM_TPM_PPI_H
 #define TPM_TPM_PPI_H
 
-#include "exec/memory.h"
+#include "system/memory.h"
 
 typedef struct TPMPPI {
     MemoryRegion ram;
@@ -31,6 +31,16 @@ typedef struct TPMPPI {
  **/
 void tpm_ppi_init(TPMPPI *tpmppi, MemoryRegion *m,
                   hwaddr addr, Object *obj);
+
+/**
+ * tpm_ppi_uninit:
+ * @tpmppi: a TPMPPI
+ * @m: the address-space / MemoryRegion to use
+ * @obj: the owner object
+ *
+ * Function to unregister the TPM PPI region.
+ */
+void tpm_ppi_uninit(TPMPPI *tpmppi, MemoryRegion *m, Object *obj);
 
 /**
  * tpm_ppi_reset:

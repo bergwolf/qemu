@@ -58,15 +58,37 @@ struct QIOChannelFile {
  * should be used instead, as this provides greater
  * functionality and cross platform portability.
  *
- * The channel will own the passed in file descriptor
- * and will take responsibility for closing it, so the
- * caller must not close it. If appropriate the caller
- * should dup() its FD before opening the channel.
+ * The channel will own the file descriptor that was
+ * passed to it and will take responsibility for closing
+ * it. This means the caller must not close it, and must
+ * not pass in descriptors that will remain in use after
+ * the channel is destroyed. In particular, @fd must
+ * not be one of the stdin/stdout/stderr descriptors. If
+ * requiring a channel to wrap a descriptor that should
+ * remain open, use qio_channel_file_new_dupfd() instead.
  *
  * Returns: the new channel object
  */
 QIOChannelFile *
 qio_channel_file_new_fd(int fd);
+
+/**
+ * qio_channel_file_new_dupfd:
+ * @fd: the file descriptor
+ * @errp: pointer to initialized error object
+ *
+ * Create a new IO channel object for a file represented by the @fd
+ * parameter. Like qio_channel_file_new_fd(), but the @fd is first
+ * duplicated with dup().
+ *
+ * The channel will own the duplicated file descriptor and will take
+ * responsibility for closing it, the original FD is owned by the
+ * caller.
+ *
+ * Returns: the new channel object
+ */
+QIOChannelFile *
+qio_channel_file_new_dupfd(int fd, Error **errp);
 
 /**
  * qio_channel_file_new_path:
